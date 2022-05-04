@@ -10,9 +10,13 @@
 #include <new>
 #include <type_traits>
 
+#include "bptree/bitmap.h"
+
 namespace bptree {
 
 constexpr uint32_t block_size = 4 * 1024;
+
+constexpr uint32_t super_height = std::numeric_limits<uint32_t>::max();
 
 inline uint32_t StringToUInt32t(const std::string& value) {
   return static_cast<uint32_t>(atol(value.c_str()));
@@ -100,42 +104,65 @@ struct DeleteInfo {
   }
 };
 
-class Block {
+class BlockBase {
+ public:
+  friend class BlockManager;
+  BlockBase() : index_(0), height_(0), buf_init_(false) {}
+  BlockBase(uint32_t index, uint32_t height) : index_(index), height_(height), buf_init_(false) {}
+
+  virtual bool FlushToBuf() = 0;
+  virtual void ParseFromBuf() = 0;
+
+  void BufInit() {
+    assert(buf_init_ == false);
+    buf_init_ = true;
+  }
+
+  bool BufInited() const {
+    return buf_init_ == true;
+  }
+
+ protected:
+  uint8_t buf_[block_size];
+  uint32_t index_;
+  uint32_t height_;
+ 
+ private:
+  bool buf_init_;
+};
+
+class Block : public BlockBase {
  public:
   friend class BlockManager;
   static void MoveHalfElementsFromTo(Block* block, Block* new_block);
 
   // 新建的block构造函数
-  Block(BlockManager& manager, uint32_t height) : manager_(manager), height_(height), prev_(0), next_(0), dirty_(true) {
-    used_bytes_ = 4 * sizeof(uint32_t);
-  }
-
-  void SetPrev(uint32_t prev) {
-    prev_ = prev;
-    dirty_ = true;
-  }
-
-  void SetNext(uint32_t next) {
-    next_ = next;
-    dirty_ = true;
+  Block(BlockManager& manager, uint32_t index, uint32_t height, uint32_t key_size, uint32_t value_size) : 
+    BlockBase(index, height), 
+    manager_(manager), 
+    prev_(0), 
+    next_(0), 
+    key_size_(key_size),
+    value_size_(value_size),
+    dirty_(true) {
+    used_bytes_ = 7 * sizeof(uint32_t);
   }
 
   // 从文件中读取
-  Block(BlockManager& manager, uint8_t(&buf)[block_size]) : manager_(manager), dirty_(false) {
-    memcpy(buf_, buf, block_size);
-    ParseFromBuf();
+  explicit Block(BlockManager& manager) : BlockBase(), manager_(manager), dirty_(false) {
+    used_bytes_ = 0;
   }
 
   uint32_t GetHeight() const {
     return height_;
   }
 
-  std::string Get(const std::string& key);
-
   std::string GetMaxKey() const {
     assert(kvs_.empty() == false);
     return kvs_.back().first;
   }
+
+  std::string Get(const std::string& key);
 
   InsertInfo Insert(const std::string& key, const std::string& value);
 
@@ -143,14 +170,17 @@ class Block {
 
   void Print();
 
-  bool FlushToBuf() {
+  bool FlushToBuf() override {
     if (dirty_ == false) {
       return false;
     }
     size_t offset = 0;
+    offset = AppendToBuf(buf_, index_, offset);
     offset = AppendToBuf(buf_, height_, offset);
     offset = AppendToBuf(buf_, prev_, offset);
     offset = AppendToBuf(buf_, next_, offset);
+    offset = AppendToBuf(buf_, key_size_, offset);
+    offset = AppendToBuf(buf_, value_size_, offset);
 
     uint32_t kv_count = kvs_.size();
     offset = AppendToBuf(buf_, kv_count, offset);
@@ -162,21 +192,24 @@ class Block {
     return true;
   }
 
-  void ParseFromBuf() {
-    used_bytes_ = 0;
+  void ParseFromBuf() override {
+    assert(BufInited() == true);
     size_t offset = 0;
+    offset = ::bptree::ParseFromBuf(buf_, index_, offset);
     offset = ::bptree::ParseFromBuf(buf_, height_, offset);
     offset = ::bptree::ParseFromBuf(buf_, prev_, offset);
     offset = ::bptree::ParseFromBuf(buf_, next_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, key_size_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, value_size_, offset);
 
     uint32_t kv_count = 0;
     offset = ::bptree::ParseFromBuf(buf_, kv_count, offset);
-    used_bytes_ = 4 * sizeof(uint32_t);
+    used_bytes_ = 7 * sizeof(uint32_t);
     for(int i = 0; i < kv_count; ++i) {
       std::string key, value;
       offset = ParseStrFromBuf(buf_, key, offset);
       offset = ParseStrFromBuf(buf_, value, offset);
-      used_bytes_ = used_bytes_ + 2 * sizeof(uint32_t) + key.size() + value.size();
+      used_bytes_ = used_bytes_ + key.size() + value.size();
       kvs_.push_back({std::move(key), std::move(value)});
     }
     dirty_ = false;
@@ -184,13 +217,23 @@ class Block {
 
  private:
   BlockManager& manager_;
-  uint8_t buf_[block_size];
-  uint32_t height_;
   uint32_t prev_;
   uint32_t next_;
   std::vector<std::pair<std::string, std::string>> kvs_;
+  uint32_t key_size_;
+  uint32_t value_size_;
   uint32_t used_bytes_;
   bool dirty_;
+
+  void SetPrev(uint32_t prev) {
+    prev_ = prev;
+    dirty_ = true;
+  }
+
+  void SetNext(uint32_t next) {
+    next_ = next;
+    dirty_ = true;
+  }
 
   void InsertKv(const std::string& key, const std::string& value);
 
@@ -206,7 +249,7 @@ class Block {
 
   void RemoveByIndex(size_t child_index) {
     assert(kvs_.size() > child_index);
-    used_bytes_ = used_bytes_ - (2*sizeof(uint32_t) + kvs_[child_index].first.size() + kvs_[child_index].second.size());
+    used_bytes_ = used_bytes_ - (kvs_[child_index].first.size() + kvs_[child_index].second.size());
     auto it = kvs_.begin();
     std::advance(it, child_index);
     kvs_.erase(it);
@@ -247,6 +290,42 @@ class Block {
   InsertInfo DoSplit(uint32_t child_index);
 
   DeleteInfo DoMerge(uint32_t child_index);
+};
+
+class SuperBlock : public BlockBase {
+ public:
+  SuperBlock(uint32_t key_size, uint32_t value_size) : BlockBase(0, super_height), root_index_(0), key_size_(key_size), value_size_(value_size) {
+
+  }
+
+  bool FlushToBuf() override {
+    uint32_t offset = 0;
+    offset = AppendToBuf(buf_, index_, offset);
+    offset = AppendToBuf(buf_, height_, offset);
+    offset = AppendToBuf(buf_, root_index_, offset);
+    offset = AppendToBuf(buf_, key_size_, offset);
+    offset = AppendToBuf(buf_, value_size_, offset);
+    std::string bit_map_str((const char*)bit_map_.ptr(), bit_map_.len());
+    AppendStrToBuf(buf_, bit_map_str, offset);
+  }
+
+  void ParseFromBuf() override {
+    assert(BufInited() == true);
+    uint32_t offset = 0;
+    offset = ::bptree::ParseFromBuf(buf_, index_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, height_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, root_index_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, key_size_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, value_size_, offset);
+    std::string bit_map_str;
+    ParseStrFromBuf(buf_, bit_map_str, offset);
+    bit_map_.Init((uint8_t*)bit_map_str.data(), bit_map_str.size());
+  }
+
+  uint32_t root_index_;
+  uint32_t key_size_;
+  uint32_t value_size_;
+  Bitmap bit_map_;
 };
 
 }

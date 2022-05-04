@@ -17,73 +17,85 @@ namespace bptree {
 
 constexpr uint32_t bit_map_size = 1024;
 
-constexpr uint32_t super_height = std::numeric_limits<uint32_t>::max();
-
 class BlockManager {
  public:
-  BlockManager(const std::string& file_name) : file_name_(file_name) {
+  BlockManager(const std::string& file_name, uint32_t key_size, uint32_t value_size) : 
+    file_name_(file_name),
+    super_block_(key_size, value_size) {
     // 从文件中读取super_block_，填充root_index_。
     if (util::FileNotExist(file_name)) {
+      assert(key_size > 0 && value_size > 0);
       // 新建的b+树，初始化super block和其他信息即可
-      bit_map_.Init(bit_map_size);
-      root_index_ = 1;
+      super_block_.bit_map_.Init(bit_map_size);
+      super_block_.root_index_ = 1;
       // super block
-      bit_map_.SetUse(0);
+      super_block_.bit_map_.SetUse(0);
       // root block
-      bit_map_.SetUse(root_index_);
-      cache_[root_index_] = std::unique_ptr<Block>(new Block(*this, 1));
-      super_block_.reset(new Block(*this, super_height));
+      super_block_.bit_map_.SetUse(1);
+      cache_[1] = std::unique_ptr<Block>(new Block(*this, super_block_.root_index_, 1, key_size, value_size));
       f_ = fopen(file_name_.c_str(), "wb+");
+      assert(f_ != nullptr);
     } else {
       f_ = fopen(file_name.c_str(), "rb+");
       assert(f_ != nullptr);
       ParseSuperBlockFromFile();
+      assert(super_block_.key_size_ == key_size && super_block_.value_size_ == value_size);
     }
   }
 
   std::string Get(const std::string& key) {
-    return cache_[root_index_]->Get(key);
+    if (key.size() != super_block_.key_size_) {
+      return "";
+    }
+    return cache_[super_block_.root_index_]->Get(key);
   }
 
-  void Insert(const std::string& key, const std::string& value) {
-    InsertInfo info = cache_[root_index_]->Insert(key, value);
+  bool Insert(const std::string& key, const std::string& value) {
+    if (key.size() != super_block_.key_size_ || value.size() != super_block_.value_size_) {
+      return false;
+    }
+    InsertInfo info = cache_[super_block_.root_index_]->Insert(key, value);
     if (info.state_ == InsertInfo::State::Split) {
       // 根节点的分裂
-      uint32_t old_root_height = LoadBlock(root_index_)->GetHeight();
+      uint32_t old_root_height = LoadBlock(super_block_.root_index_)->GetHeight();
       uint32_t new_block_index = AllocNewBlock(old_root_height);
-      uint32_t old_root_index = root_index_;
-      Block* old_root = LoadBlock(root_index_);
+      uint32_t old_root_index = super_block_.root_index_;
+      Block* old_root = LoadBlock(super_block_.root_index_);
       Block* new_block = LoadBlock(new_block_index);
       Block::MoveHalfElementsFromTo(old_root, new_block);
       // update link
       old_root->SetNext(new_block_index);
       new_block->SetPrev(old_root_index);
-      root_index_ = AllocNewBlock(old_root_height + 1);
-      Block* new_root = LoadBlock(root_index_);
+      super_block_.root_index_ = AllocNewBlock(old_root_height + 1);
+      Block* new_root = LoadBlock(super_block_.root_index_);
       new_root->InsertKv(old_root->GetMaxKey(), std::to_string(old_root_index));
       new_root->InsertKv(new_block->GetMaxKey(), std::to_string(new_block_index));
     }
+    return true;
   }
 
   void Delete(const std::string& key) {
+    if (key.size() != super_block_.key_size_) {
+      return;
+    }
     // 根节点的merge信息不处理
-    cache_[root_index_]->Delete(key);
+    cache_[super_block_.root_index_]->Delete(key);
   }
 
   Block* LoadBlock(uint32_t index) {
     if (cache_.count(index) == 0) {
-      uint8_t buf[block_size];
-      ReadBlockFromFile(buf, index);
-      cache_[index] = std::unique_ptr<Block>(new Block(*this, buf));
+      std::unique_ptr<Block> new_block = std::unique_ptr<Block>(new Block(*this));
+      ReadBlockFromFile(new_block.get(), index);
+      new_block->ParseFromBuf();
+      cache_[index] = std::move(new_block);
     }
     return cache_[index].get();
   }
 
   // 申请一个新的Block
   uint32_t AllocNewBlock(uint32_t height) {
-    uint32_t result = bit_map_.GetFirstFreeAndSet();
-    cache_[result] = std::unique_ptr<Block>(new Block(*this, height));
-    cache_[result]->height_ = height;
+    uint32_t result = super_block_.bit_map_.GetFirstFreeAndSet();
+    cache_[result] = std::unique_ptr<Block>(new Block(*this, result, height, super_block_.key_size_, super_block_.value_size_));
     return result;
   }
 
@@ -99,13 +111,13 @@ class BlockManager {
       Block* prev_block = LoadBlock(prev);
       prev_block->SetNext(next);
     }
-    bit_map_.SetFree(index);
+    super_block_.bit_map_.SetFree(index);
     cache_.erase(index);
   }
 
   uint32_t GetFirstLeafBlockIndex() {
     uint32_t result = 0;
-    Block* block = cache_[root_index_].get();
+    Block* block = cache_[super_block_.root_index_].get();
     while(block->GetHeight() > 0) {
       if (block->kvs_.size() == 0) {
         return 0;
@@ -117,10 +129,11 @@ class BlockManager {
     return result;
   }
 
-  void ReadBlockFromFile(uint8_t(&buf)[block_size], uint32_t index) {
+  void ReadBlockFromFile(BlockBase* block, uint32_t index) {
+    block->BufInit();
     int ret = fseek(f_, index * block_size, SEEK_SET);
     assert(ret == 0);
-    size_t read_ret = fread(buf, block_size, 1, f_);
+    size_t read_ret = fread(block->buf_, block_size, 1, f_);
     assert(read_ret == 1);
   }
 
@@ -155,7 +168,7 @@ class BlockManager {
     f_ = nullptr;
   }
 
-  bool FlushBlockToFile(FILE* f, uint32_t index, Block* block) {
+  bool FlushBlockToFile(FILE* f, uint32_t index, BlockBase* block) {
     uint32_t offset = index * block_size;
     int ret = fseek(f, static_cast<long>(offset), SEEK_SET);
     assert(ret == 0);
@@ -165,40 +178,20 @@ class BlockManager {
 
   // 重构
   void FlushSuperBlockToFile(FILE* f) {
-    // 将元信息flush到super_block_中，然后写入文件
-    assert(super_block_ != nullptr);
-    size_t offset = 0;
-    super_block_->kvs_.clear();
-    super_block_->InsertKv("root_index", std::to_string(root_index_));
-    super_block_->InsertKv("bitmap", std::string((const char*)bit_map_.ptr(), bit_map_.len()));
-    std::cout << "flush super, bitmap size == " << bit_map_.len() << std::endl;
-    super_block_->FlushToBuf();
-    FlushBlockToFile(f, 0, super_block_.get());
+    super_block_.FlushToBuf();
+    FlushBlockToFile(f, 0, &super_block_);
   }
 
   void ParseSuperBlockFromFile() {
-    assert(super_block_ == nullptr);
-    uint8_t buf[block_size];
-    ReadBlockFromFile(buf, 0);
-    super_block_ = std::unique_ptr<Block>(new Block(*this, buf));
-    super_block_->Print();
-    auto root_index_str = super_block_->Get("root_index");
-    assert(root_index_str.empty() == false);
-    root_index_ = StringToUInt32t(root_index_str);
-    auto bit_map_str = super_block_->Get("bitmap");
-    assert(bit_map_str.size() != 0);
-    bit_map_.Init((uint8_t*)(bit_map_str.data()), bit_map_str.size());
-
-    LoadBlock(root_index_);
+    ReadBlockFromFile(&super_block_, 0);
+    super_block_.ParseFromBuf();
+    LoadBlock(super_block_.root_index_);
   }
 
  private:
   std::unordered_map<uint32_t, std::unique_ptr<Block>> cache_;
   std::string file_name_;
-  std::unique_ptr<Block> super_block_;
-  uint32_t root_index_;
-  // bitmap
-  Bitmap bit_map_;
+  SuperBlock super_block_;
   FILE* f_;
 };
 }

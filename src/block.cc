@@ -115,7 +115,7 @@ DeleteInfo Block::Delete(const std::string& key) {
   } else {
     for(auto it = kvs_.begin(); it != kvs_.end(); ++it) {
       if (it->first == key) {
-        used_bytes_ = used_bytes_ - (2 * sizeof(uint32_t) + it->first.size() + it->second.size());
+        used_bytes_ = used_bytes_ - (it->first.size() + it->second.size());
         dirty_ = true;
         kvs_.erase(it);
         break;
@@ -134,7 +134,7 @@ DeleteInfo Block::Delete(const std::string& key) {
 
 void Block::InsertKv(const std::string& key, const std::string& value) {
   kvs_.push_back({key, value});
-  used_bytes_ = used_bytes_ + key.size() + value.size() + 2 * sizeof(uint32_t); // 分别记录key和value的长度
+  used_bytes_ = used_bytes_ + key.size() + value.size(); // 分别记录key和value的长度
   dirty_ = true;
 }
 
@@ -143,7 +143,7 @@ void Block::PopBack() {
     return;
   }
   auto& tmp = kvs_.back();
-  uint32_t unused_size = (2 * sizeof(uint32_t) + tmp.first.size() + tmp.second.size());
+  uint32_t unused_size = (tmp.first.size() + tmp.second.size());
   assert(used_bytes_ > unused_size);
   used_bytes_ -= unused_size;
   kvs_.pop_back();
@@ -166,10 +166,10 @@ void Block::Print() {
 void Block::MoveAllElementsTo(Block* other) {
   for(int i = 0; i < kvs_.size(); ++i) {
     other->InsertKv(kvs_[i]);
+    used_bytes_ = used_bytes_ - (key_size_ + value_size_);
   }
   kvs_.clear();
   dirty_ = true;
-  // 本节点即将被dealloc，因此可以不更新used_bytes_
 }
 
 void Block::MoveFirstElementTo(Block* other) {
@@ -177,7 +177,7 @@ void Block::MoveFirstElementTo(Block* other) {
   other->InsertKv(kvs_.front());
   auto it = kvs_.begin();
   dirty_ = true;
-  used_bytes_ = used_bytes_ - (2 * sizeof(uint32_t) + it->first.size() + it->second.size());
+  used_bytes_ = used_bytes_ - (key_size_ + value_size_);
   kvs_.erase(it);
 }
 
@@ -186,9 +186,8 @@ void Block::MoveLastElementTo(Block* other) {
   auto other_begin = other->kvs_.begin();
   other->InsertKv(kvs_.back());
   other->ReSort();
-  auto it = kvs_.end();
   dirty_ = true;
-  used_bytes_ = used_bytes_ - (2 * sizeof(uint32_t) + it->first.size() + it->second.size());
+  used_bytes_ = used_bytes_ - (key_size_ + value_size_);
   kvs_.pop_back();
 }
 
@@ -231,7 +230,7 @@ DeleteInfo Block::DoMerge(uint32_t child_index) {
   Block* child = manager_.LoadBlock(child_block_index);
   // 特殊情况，只有这个节点并且这个节点已经空了，则直接删除并返回继续merge
   if (child->kvs_.size() == 0 && kvs_.size() == 1) {
-    used_bytes_ = used_bytes_ - (2*sizeof(uint32_t) + kvs_[0].first.size() + kvs_[0].second.size());
+    used_bytes_ = used_bytes_ - (key_size_ + value_size_);
     kvs_.clear();
     dirty_ = true;
     manager_.DeallocBlock(child_block_index);
