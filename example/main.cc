@@ -12,24 +12,22 @@ kv大小调整为固定的之后，superblock不适合这种格式了，需要�
 */
 
 int main() {
-  bptree::BlockManager manager("test.db");
-  manager.PrintBpTree();
-  /*
-  for(int i = 0; i < 12; ++i) {
+  bptree::BlockManager manager("test.db", 1, 5);
+  
+  for(int i = 0; i < 18; ++i) {
     std::string key;
     key.push_back(char(i + 'a'));
     manager.Insert(key, "value");
     std::cout << " after insert key " << key << std::endl << std::endl;
   }
   std::cout << " ***** " << std::endl << std::endl;
-  */
+  manager.PrintBpTree();
   /*
   manager.Delete("d");
   manager.Delete("e");
   manager.Delete("h");
   manager.Delete("a");
   manager.PrintBpTree();
-  manager.PrintLeafBlockIndexOrdered();
   std::cout << " ***** " << std::endl << std::endl;
   for(int i = 0; i < 12; ++i) {
     std::string key;
@@ -38,6 +36,6 @@ int main() {
     std::cout << " after delete key " << key << std::endl << std::endl;
     manager.PrintBpTree();
   }*/
-  //manager.FlushToFile();
+  manager.FlushToFile();
   return 0;
 }

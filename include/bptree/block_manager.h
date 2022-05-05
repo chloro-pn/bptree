@@ -43,6 +43,37 @@ class BlockManager {
     }
   }
 
+  std::pair<uint32_t, uint32_t> BlockSplit(Block* block) {
+    uint32_t new_block_1_index = AllocNewBlock(block->GetHeight());
+    uint32_t new_block_2_index = AllocNewBlock(block->GetHeight());
+    Block* new_block_1 = LoadBlock(new_block_1_index);
+    Block* new_block_2 = LoadBlock(new_block_2_index);
+    size_t half_count = block->kv_view_.size() / 2;
+    for(size_t i = 0; i < half_count; ++i) {
+      bool succ = new_block_1->InsertKv(block->kv_view_[i].key_view, block->kv_view_[i].value_view);
+      assert(succ == true);
+    }
+    for(int i = half_count; i < block->kv_view_.size(); ++i) {
+      bool succ = new_block_2->InsertKv(block->kv_view_[i].key_view, block->kv_view_[i].value_view);
+      assert(succ == true);
+    }
+    return {new_block_1_index, new_block_2_index};
+  }
+
+  uint32_t BlockMerge(Block* b1, Block* b2) {
+    uint32_t new_block_index = AllocNewBlock(b1->GetHeight());
+    Block* new_block = LoadBlock(new_block_index);
+    for(size_t i = 0; i < b1->kv_view_.size(); ++i) {
+      bool succ = new_block->InsertKv(b1->kv_view_[i].key_view, b1->kv_view_[i].value_view);
+      assert(succ == true);
+    }
+    for(size_t i = 0; i < b2->kv_view_.size(); ++i) {
+      bool succ = new_block->InsertKv(b2->kv_view_[i].key_view, b2->kv_view_[i].value_view);
+      assert(succ == true);
+    }
+    return new_block_index;
+  }
+
   std::string Get(const std::string& key) {
     if (key.size() != super_block_.key_size_) {
       return "";
@@ -58,18 +89,26 @@ class BlockManager {
     if (info.state_ == InsertInfo::State::Split) {
       // 根节点的分裂
       uint32_t old_root_height = LoadBlock(super_block_.root_index_)->GetHeight();
-      uint32_t new_block_index = AllocNewBlock(old_root_height);
       uint32_t old_root_index = super_block_.root_index_;
       Block* old_root = LoadBlock(super_block_.root_index_);
-      Block* new_block = LoadBlock(new_block_index);
-      Block::MoveHalfElementsFromTo(old_root, new_block);
+      auto new_blocks = BlockSplit(old_root);
+
+      Block* left_block = LoadBlock(new_blocks.first);
+      Block* right_block = LoadBlock(new_blocks.second);
       // update link
-      old_root->SetNext(new_block_index);
-      new_block->SetPrev(old_root_index);
-      super_block_.root_index_ = AllocNewBlock(old_root_height + 1);
-      Block* new_root = LoadBlock(super_block_.root_index_);
-      new_root->InsertKv(old_root->GetMaxKey(), std::to_string(old_root_index));
-      new_root->InsertKv(new_block->GetMaxKey(), std::to_string(new_block_index));
+      left_block->next_ = new_blocks.second;
+      right_block->prev_ = new_blocks.first;
+      // insert
+      if (info.key_ <= left_block->GetMaxKey()) {
+        left_block->InsertKv(info.key_, info.value_);
+      } else {
+        right_block->InsertKv(info.key_, info.value_);
+      }
+      // update root
+      old_root->Clear();
+      old_root->height_ = old_root_height + 1;
+      old_root->InsertKv(left_block->GetMaxKey(), ConstructIndexByNum(new_blocks.first));
+      old_root->InsertKv(right_block->GetMaxKey(), ConstructIndexByNum(new_blocks.second));
     }
     return true;
   }
@@ -99,34 +138,22 @@ class BlockManager {
     return result;
   }
 
-  void DeallocBlock(uint32_t index) {
+  void DeallocBlock(uint32_t index, bool update_link_relation = true) {
     Block* block = LoadBlock(index);
-    uint32_t next = block->next_;
-    uint32_t prev = block->prev_;
-    if (next != 0) {
-      Block* next_block = LoadBlock(next);
-      next_block->SetPrev(prev);
-    }
-    if (prev != 0) {
-      Block* prev_block = LoadBlock(prev);
-      prev_block->SetNext(next);
+    if (update_link_relation == true) {
+      uint32_t next = block->next_;
+      uint32_t prev = block->prev_;
+      if (next != 0) {
+        Block* next_block = LoadBlock(next);
+        next_block->SetPrev(prev);
+      }
+      if (prev != 0) {
+        Block* prev_block = LoadBlock(prev);
+        prev_block->SetNext(next);
+      }
     }
     super_block_.bit_map_.SetFree(index);
     cache_.erase(index);
-  }
-
-  uint32_t GetFirstLeafBlockIndex() {
-    uint32_t result = 0;
-    Block* block = cache_[super_block_.root_index_].get();
-    while(block->GetHeight() > 0) {
-      if (block->kvs_.size() == 0) {
-        return 0;
-      }
-      uint32_t first_child_index = block->GetChildIndex(0);
-      block = LoadBlock(first_child_index);
-      result = first_child_index;
-    }
-    return result;
   }
 
   void ReadBlockFromFile(BlockBase* block, uint32_t index) {
@@ -142,15 +169,6 @@ class BlockManager {
       std::cout << " index : " << each.first << std::endl;
       each.second->Print();
     }
-  }
-
-  void PrintLeafBlockIndexOrdered() {
-    uint32_t first = GetFirstLeafBlockIndex();
-    while(first != 0) {
-      std::cout << first << " ";
-      first = LoadBlock(first)->next_;
-    }
-    std::cout << std::endl;
   }
 
   void FlushToFile() {
