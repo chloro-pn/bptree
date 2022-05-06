@@ -11,7 +11,7 @@
 #include <type_traits>
 #include <string_view>
 
-#include "bptree/bitmap.h"
+#include "bptree/exception.h"
 
 namespace bptree {
 
@@ -19,21 +19,28 @@ constexpr uint32_t block_size = 4 * 1024;
 
 constexpr uint32_t super_height = std::numeric_limits<uint32_t>::max();
 
+constexpr uint32_t not_free_flag = std::numeric_limits<uint32_t>::max();
+
 constexpr uint32_t max_index_length = 10;
 
 // helper function
 
-inline uint32_t StringToUInt32t(const std::string& value) {
+// tested
+inline uint32_t StringToUInt32t(const std::string& value) noexcept {
   return static_cast<uint32_t>(atol(value.c_str()));
 }
 
-inline uint32_t StringToUInt32t(const std::string_view& value) {
+// tested
+inline uint32_t StringToUInt32t(const std::string_view& value) noexcept {
   return static_cast<uint32_t>(atol(value.data()));
 }
 
-inline std::string ConstructIndexByNum(uint32_t n) {
+// tested
+inline std::string ConstructIndexByNum(uint32_t n) noexcept {
   std::string result = std::to_string(n);
-  assert(result.size() <= 10);
+  if (result.size() > 10) {
+    throw BptreeExecption("cosntruct index error, index_str is too long");
+  }
   if (result.size() < 10) {
     std::string tmp;
     for(int i = 0; i < (10 - result.size()); ++i) {
@@ -44,16 +51,18 @@ inline std::string ConstructIndexByNum(uint32_t n) {
   return result;
 }
 
+// tested
 template <size_t n, typename T, typename std::enable_if<!std::is_same<T, std::string>::value, int>::type = 0>
-inline size_t AppendToBuf(uint8_t(&buf)[n], const T& t, size_t start_point) {
+inline size_t AppendToBuf(uint8_t(&buf)[n], const T& t, size_t start_point) noexcept {
   memcpy((void*)&buf[start_point], &t, sizeof(T));
   start_point += sizeof(T);
   assert(start_point <= n);
   return start_point;
 }
 
+// tested
 template <size_t n>
-inline size_t AppendStrToBuf(uint8_t(&buf)[n], const std::string& str, size_t start_point) {
+inline size_t AppendStrToBuf(uint8_t(&buf)[n], const std::string& str, size_t start_point) noexcept {
   uint32_t len = str.size();
   memcpy((void*)&buf[start_point], &len, sizeof(len));
   start_point += sizeof(len);
@@ -63,14 +72,16 @@ inline size_t AppendStrToBuf(uint8_t(&buf)[n], const std::string& str, size_t st
   return start_point;
 }
 
+// tested
 template <size_t n, typename T, typename std::enable_if<!std::is_same<T, std::string>::value, int>::type = 0>
-inline size_t ParseFromBuf(uint8_t(&buf)[n], T& t, size_t start_point) {
+inline size_t ParseFromBuf(uint8_t(&buf)[n], T& t, size_t start_point) noexcept {
   memcpy(&t, &buf[start_point], sizeof(T));
   start_point += sizeof(T);
   assert(start_point <= n);
   return start_point;
 }
 
+// tested
 template <size_t n>
 inline size_t ParseStrFromBuf(uint8_t(&buf)[n], std::string& t, size_t start_point) {
   uint32_t len = 0;
@@ -80,8 +91,7 @@ inline size_t ParseStrFromBuf(uint8_t(&buf)[n], std::string& t, size_t start_poi
   if (len == 0) {
     return start_point;
   }
-  char* ptr = new (std::nothrow) char[len];
-  assert(ptr != nullptr);
+  char* ptr = new char[len];
   memcpy(ptr, &buf[start_point], len);
   start_point += len;
   assert(start_point <= n);
@@ -100,13 +110,13 @@ struct InsertInfo {
   std::string key_;
   std::string value_;
 
-  static InsertInfo Ok() {
+  static InsertInfo Ok() noexcept {
     InsertInfo obj;
     obj.state_ = State::Ok;
     return obj;
   }
 
-  static InsertInfo Split(const std::string& key, const std::string& value) {
+  static InsertInfo Split(const std::string& key, const std::string& value) noexcept {
     InsertInfo obj;
     obj.state_ = State::Split;
     obj.key_ = key;
@@ -119,13 +129,13 @@ struct DeleteInfo {
   enum class State { Ok, Merge, Invalid };
   State state_;
 
-  static DeleteInfo Ok() {
+  static DeleteInfo Ok() noexcept {
     DeleteInfo obj;
     obj.state_ = State::Ok;
     return obj;
   }
 
-  static DeleteInfo Merge() {
+  static DeleteInfo Merge() noexcept {
     DeleteInfo obj;
     obj.state_ = State::Merge;
     return obj;
@@ -135,18 +145,18 @@ struct DeleteInfo {
 class BlockBase {
  public:
   friend class BlockManager;
-  BlockBase() : index_(0), height_(0), buf_init_(false) {}
-  BlockBase(uint32_t index, uint32_t height) : index_(index), height_(height), buf_init_(false) {}
+  BlockBase() noexcept : index_(0), height_(0), buf_init_(false) {}
+  BlockBase(uint32_t index, uint32_t height) noexcept : index_(index), height_(height), buf_init_(false) {}
 
-  virtual bool FlushToBuf() = 0;
-  virtual void ParseFromBuf() = 0;
+  virtual bool FlushToBuf() noexcept = 0;
+  virtual void ParseFromBuf() noexcept = 0;
 
-  void BufInit() {
+  void BufInit() noexcept {
     assert(buf_init_ == false);
     buf_init_ = true;
   }
 
-  bool BufInited() const {
+  bool BufInited() const noexcept {
     return buf_init_ == true;
   }
 
@@ -170,9 +180,10 @@ class Block : public BlockBase {
   friend class BlockManager;
 
   // 新建的block构造函数
-  Block(BlockManager& manager, uint32_t index, uint32_t height, uint32_t key_size, uint32_t value_size) : 
+  Block(BlockManager& manager, uint32_t index, uint32_t height, uint32_t key_size, uint32_t value_size) noexcept : 
     BlockBase(index, height), 
     manager_(manager), 
+    next_free_index_(not_free_flag),
     prev_(0), 
     next_(0), 
     key_size_(key_size),
@@ -186,15 +197,24 @@ class Block : public BlockBase {
   }
 
   // 从文件中读取
-  explicit Block(BlockManager& manager) : BlockBase(), manager_(manager) {
+  explicit Block(BlockManager& manager) noexcept : BlockBase(), manager_(manager) {
     
   }
 
-  uint32_t GetHeight() const {
+  uint32_t GetNextFreeIndex() const noexcept {
+    assert(next_free_index_ != not_free_flag);
+    return next_free_index_;
+  }
+
+  void SetNextFreeIndex(uint32_t nfi) noexcept {
+    next_free_index_ = nfi;
+  }
+
+  uint32_t GetHeight() const noexcept {
     return height_;
   }
 
-  std::string GetMaxKey() const {
+  std::string GetMaxKey() const noexcept {
     assert(kv_view_.empty() == false);
     return std::string(kv_view_.back().key_view);
   }
@@ -207,8 +227,9 @@ class Block : public BlockBase {
 
   void Print();
 
-  bool FlushToBuf() override {
+  bool FlushToBuf() noexcept override {
     size_t offset = 0;
+    offset = AppendToBuf(buf_, next_free_index_, offset);
     offset = AppendToBuf(buf_, index_, offset);
     offset = AppendToBuf(buf_, height_, offset);
     offset = AppendToBuf(buf_, prev_, offset);
@@ -217,14 +238,15 @@ class Block : public BlockBase {
     offset = AppendToBuf(buf_, value_size_, offset);
     offset = AppendToBuf(buf_, head_entry_, offset);
     offset = AppendToBuf(buf_, free_list_, offset);
-    assert(offset == 32);
+    assert(offset == 36);
     
     return true;
   }
 
-  void ParseFromBuf() override {
+  void ParseFromBuf() noexcept override {
   assert(BufInited() == true);
   size_t offset = 0;
+  offset = ::bptree::ParseFromBuf(buf_, next_free_index_, offset);
   offset = ::bptree::ParseFromBuf(buf_, index_, offset);
   offset = ::bptree::ParseFromBuf(buf_, height_, offset);
   offset = ::bptree::ParseFromBuf(buf_, prev_, offset);
@@ -245,6 +267,7 @@ class Block : public BlockBase {
 
  private:
   BlockManager& manager_;
+  uint32_t next_free_index_;
   uint32_t prev_;
   uint32_t next_;
   uint32_t key_size_;
@@ -254,23 +277,25 @@ class Block : public BlockBase {
 
   std::vector<Entry> kv_view_;
 
-  void SetPrev(uint32_t prev) {
+  void SetPrev(uint32_t prev) noexcept {
     prev_ = prev;
   }
 
-  void SetNext(uint32_t next) {
+  void SetNext(uint32_t next) noexcept {
     next_ = next;
   }
 
   // 索引值从1开始计数
-  uint32_t GetOffsetByEntryIndex(uint32_t index) {
+  // tested
+  uint32_t GetOffsetByEntryIndex(uint32_t index) noexcept {
     assert(index > 0);
     uint32_t result = 8 * sizeof(uint32_t) + (index - 1) * GetEntrySize();
     return result;
   }
 
   // 解析索引值为index的entry，并返回下一个entry的索引值 or 0 （0 代表本entry为最后一个）
-  uint32_t ParseEntry(uint32_t index, std::string_view& key, std::string_view& value) {
+  // tested
+  uint32_t ParseEntry(uint32_t index, std::string_view& key, std::string_view& value) noexcept {
     assert(index != 0);
     uint32_t offset = GetOffsetByEntryIndex(index);
     uint32_t next = GetEntryNext(offset);
@@ -279,7 +304,7 @@ class Block : public BlockBase {
     return next;
   }
 
-  void InitEmptyEntrys() {
+  void InitEmptyEntrys() noexcept {
     uint32_t free_index = 1;
     uint32_t offset = GetOffsetByEntryIndex(free_index);
     while (offset + GetEntrySize() <= block_size) {
@@ -292,43 +317,43 @@ class Block : public BlockBase {
     SetEntryNext(free_index - 1, 0);
   }
 
-  void SetEntryNext(uint32_t index, uint32_t next) {
+  void SetEntryNext(uint32_t index, uint32_t next) noexcept {
     uint32_t offset = GetOffsetByEntryIndex(index);
     assert(offset + sizeof(next) <= block_size);
     memcpy(&buf_[offset], &next, sizeof(next));
   }
-
-  uint32_t GetEntryNext(uint32_t offset) const {
+  // tested
+  uint32_t GetEntryNext(uint32_t offset) const noexcept {
     uint32_t result = 0;
     memcpy(&result, &buf_[offset], sizeof(result));
     return result;
   }
 
-  std::string_view SetEntryKey(uint32_t offset, const std::string& key) {
+  std::string_view SetEntryKey(uint32_t offset, const std::string& key) noexcept {
     assert(key.size() == key_size_);
     memcpy(&buf_[offset + sizeof(uint32_t)], key.data(), key_size_);
     return std::string_view((const char*)&buf_[offset + sizeof(uint32_t)], static_cast<size_t>(key_size_));
   }
-
-  std::string_view GetEntryKeyView(uint32_t offset) const {
+  // tested
+  std::string_view GetEntryKeyView(uint32_t offset) const noexcept {
     return std::string_view((const char*)&buf_[offset + sizeof(uint32_t)], static_cast<size_t>(key_size_));
   }
 
-  std::string_view SetEntryValue(uint32_t offset, const std::string& value) {
+  std::string_view SetEntryValue(uint32_t offset, const std::string& value) noexcept {
     assert(value.size() == value_size_);
     memcpy(&buf_[offset + sizeof(uint32_t) + key_size_], value.data(), value_size_);
     return std::string_view((const char*)&buf_[offset + sizeof(uint32_t) + key_size_], static_cast<size_t>(value_size_));
   }
-
-  std::string_view GetEntryValueView(uint32_t offset) const {
+  // tested
+  std::string_view GetEntryValueView(uint32_t offset) const noexcept {
     return std::string_view((const char*)&buf_[offset + sizeof(uint32_t) + key_size_], static_cast<size_t>(value_size_));
   }
 
-  uint32_t GetEntrySize() const {
+  uint32_t GetEntrySize() const noexcept {
     return sizeof(uint32_t) + key_size_ + value_size_;
   }
 
-  void RemoveEntry(uint32_t index, uint32_t prev_index) {
+  void RemoveEntry(uint32_t index, uint32_t prev_index) noexcept {
     uint32_t offset = GetOffsetByEntryIndex(index);
     uint32_t next = GetEntryNext(offset);
     if (prev_index != 0) {
@@ -343,7 +368,7 @@ class Block : public BlockBase {
     free_list_ = index;
   }
 
-  Entry InsertEntry(uint32_t prev_index, const std::string& key, const std::string& value, bool& full) {
+  Entry InsertEntry(uint32_t prev_index, const std::string& key, const std::string& value, bool& full) noexcept {
     if (free_list_ == 0) {
       full = true;
       return Entry();
@@ -368,25 +393,26 @@ class Block : public BlockBase {
     return entry;
   }
 
-  std::string_view UpdateEntryKey(uint32_t index, const std::string& key) {
+  // note : 调用者需要保证key的有序性
+  std::string_view UpdateEntryKey(uint32_t index, const std::string& key) noexcept {
     uint32_t offset = GetOffsetByEntryIndex(index);
     SetEntryKey(offset, key);
     return GetEntryKeyView(offset);
   }
 
-  std::string_view UpdateEntryValue(uint32_t index, const std::string& value) {
+  std::string_view UpdateEntryValue(uint32_t index, const std::string& value) noexcept {
     uint32_t offset = GetOffsetByEntryIndex(index);
     SetEntryValue(offset, value);
     return GetEntryValueView(offset);
   }
 
-  bool InsertKv(const std::string_view& key, const std::string_view& value);
+  bool InsertKv(const std::string_view& key, const std::string_view& value) noexcept;
 
-  bool InsertKv(const std::string& key, const std::string& value) {
+  bool InsertKv(const std::string& key, const std::string& value) noexcept {
     InsertKv(std::string_view(key), std::string_view(value));
   }
 
-  bool InsertKv(const std::pair<std::string, std::string>& kv) {
+  bool InsertKv(const std::pair<std::string, std::string>& kv) noexcept {
     InsertKv(kv.first, kv.second);
   }
 
@@ -403,14 +429,14 @@ class Block : public BlockBase {
     kv_view_.erase(it);
   }
 
-  void Clear() {
+  void Clear() noexcept {
     head_entry_ = 0;
     free_list_ = 1;
     InitEmptyEntrys();
     kv_view_.clear();
   }
 
-  uint32_t GetChildIndex(size_t child_index) const {
+  uint32_t GetChildIndex(size_t child_index) const noexcept {
     return StringToUInt32t(kv_view_[child_index].value_view);
   }
 
@@ -427,7 +453,7 @@ class Block : public BlockBase {
     kv_view_.erase(it);
   }
 
-  void UpdateByIndex(size_t child_index, const std::string& key, const std::string& value) {
+  void UpdateByIndex(size_t child_index, const std::string& key, const std::string& value) noexcept {
     assert(kv_view_.size() > child_index);
     uint32_t update_index = kv_view_[child_index].index;
     auto key_view = UpdateEntryKey(update_index, key);
@@ -436,19 +462,19 @@ class Block : public BlockBase {
     kv_view_[child_index].value_view = value_view;
   }
 
-  bool CheckIfNeedToMerge() {
+  bool CheckIfNeedToMerge() noexcept {
     return kv_view_.size() < 5;
     //return used_bytes_ * 2 < block_size;
   }
 
-  bool CheckCanMerge(Block* b1, Block* b2) {
+  bool CheckCanMerge(Block* b1, Block* b2) noexcept {
     return b1->kv_view_.size() + b2->kv_view_.size() <= 10;
     //return b1->used_bytes_ + b2->used_bytes_ <= block_size;
   }
 
-  void UpdateBlockPrevIndex(uint32_t block_index, uint32_t prev);
+  void UpdateBlockPrevIndex(uint32_t block_index, uint32_t prev) noexcept;
 
-  void UpdateBlockNextIndex(uint32_t block_index, uint32_t next);
+  void UpdateBlockNextIndex(uint32_t block_index, uint32_t next) noexcept;
 
   void MoveFirstElementTo(Block* other);
 
@@ -461,22 +487,22 @@ class Block : public BlockBase {
 
 class SuperBlock : public BlockBase {
  public:
-  SuperBlock(uint32_t key_size, uint32_t value_size) : BlockBase(0, super_height), root_index_(0), key_size_(key_size), value_size_(value_size) {
+  SuperBlock(uint32_t key_size, uint32_t value_size) noexcept : BlockBase(0, super_height), root_index_(0), key_size_(key_size), value_size_(value_size), free_block_head_(0), current_max_block_index_(1) {
 
   }
 
-  bool FlushToBuf() override {
+  bool FlushToBuf() noexcept override {
     uint32_t offset = 0;
     offset = AppendToBuf(buf_, index_, offset);
     offset = AppendToBuf(buf_, height_, offset);
     offset = AppendToBuf(buf_, root_index_, offset);
     offset = AppendToBuf(buf_, key_size_, offset);
     offset = AppendToBuf(buf_, value_size_, offset);
-    std::string bit_map_str((const char*)bit_map_.ptr(), bit_map_.len());
-    AppendStrToBuf(buf_, bit_map_str, offset);
+    offset = AppendToBuf(buf_, free_block_head_, offset);
+    offset = AppendToBuf(buf_, current_max_block_index_, offset);
   }
 
-  void ParseFromBuf() override {
+  void ParseFromBuf() noexcept override {
     assert(BufInited() == true);
     uint32_t offset = 0;
     offset = ::bptree::ParseFromBuf(buf_, index_, offset);
@@ -484,15 +510,16 @@ class SuperBlock : public BlockBase {
     offset = ::bptree::ParseFromBuf(buf_, root_index_, offset);
     offset = ::bptree::ParseFromBuf(buf_, key_size_, offset);
     offset = ::bptree::ParseFromBuf(buf_, value_size_, offset);
-    std::string bit_map_str;
-    ParseStrFromBuf(buf_, bit_map_str, offset);
-    bit_map_.Init((uint8_t*)bit_map_str.data(), bit_map_str.size());
+    offset = ::bptree::ParseFromBuf(buf_, free_block_head_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, current_max_block_index_, offset);
   }
 
   uint32_t root_index_;
   uint32_t key_size_;
   uint32_t value_size_;
-  Bitmap bit_map_;
+  // free_block_head_ == 0意味着当前分配的所有block满了，需要分配新的block
+  uint32_t free_block_head_;
+  uint32_t current_max_block_index_;
 };
 
 }

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "bptree/block.h"
-#include "bptree/bitmap.h"
 #include "bptree/util.h"
+#include "bptree/exception.h"
 
 #include <unordered_map>
 #include <string>
@@ -19,27 +19,31 @@ constexpr uint32_t bit_map_size = 1024;
 
 class BlockManager {
  public:
-  BlockManager(const std::string& file_name, uint32_t key_size, uint32_t value_size) : 
+  explicit BlockManager(const std::string& file_name, uint32_t key_size = 0, uint32_t value_size = 0) : 
     file_name_(file_name),
     super_block_(key_size, value_size) {
     // 从文件中读取super_block_，填充root_index_。
     if (util::FileNotExist(file_name)) {
-      assert(key_size > 0 && value_size > 0);
+      if (key_size == 0 || value_size == 0) {
+        throw BptreeExecption("block manager construct error, key_size and value_size should not be 0");
+      }
       // 新建的b+树，初始化super block和其他信息即可
-      super_block_.bit_map_.Init(bit_map_size);
       super_block_.root_index_ = 1;
       // super block
-      super_block_.bit_map_.SetUse(0);
+      super_block_.free_block_head_ = 0;
+      super_block_.current_max_block_index_ = 1;
       // root block
-      super_block_.bit_map_.SetUse(1);
-      cache_[1] = std::unique_ptr<Block>(new Block(*this, super_block_.root_index_, 1, key_size, value_size));
+      cache_[super_block_.root_index_] = std::unique_ptr<Block>(new Block(*this, super_block_.root_index_, 1, key_size, value_size));
       f_ = fopen(file_name_.c_str(), "wb+");
-      assert(f_ != nullptr);
+      if (f_ == nullptr) {
+        throw BptreeExecption("file " + file_name + " open fail");
+      }
     } else {
       f_ = fopen(file_name.c_str(), "rb+");
-      assert(f_ != nullptr);
+      if (f_ == nullptr) {
+        throw BptreeExecption("file " + file_name + " open fail");
+      }
       ParseSuperBlockFromFile();
-      assert(super_block_.key_size_ == key_size && super_block_.value_size_ == value_size);
     }
   }
 
@@ -51,11 +55,15 @@ class BlockManager {
     size_t half_count = block->kv_view_.size() / 2;
     for(size_t i = 0; i < half_count; ++i) {
       bool succ = new_block_1->InsertKv(block->kv_view_[i].key_view, block->kv_view_[i].value_view);
-      assert(succ == true);
+      if (succ == false) {
+        throw BptreeExecption("block broken");
+      }
     }
     for(int i = half_count; i < block->kv_view_.size(); ++i) {
       bool succ = new_block_2->InsertKv(block->kv_view_[i].key_view, block->kv_view_[i].value_view);
-      assert(succ == true);
+      if (succ == false) {
+        throw BptreeExecption("block broken");
+      }
     }
     return {new_block_1_index, new_block_2_index};
   }
@@ -65,25 +73,29 @@ class BlockManager {
     Block* new_block = LoadBlock(new_block_index);
     for(size_t i = 0; i < b1->kv_view_.size(); ++i) {
       bool succ = new_block->InsertKv(b1->kv_view_[i].key_view, b1->kv_view_[i].value_view);
-      assert(succ == true);
+      if (succ == false) {
+        throw BptreeExecption("block broken");
+      }
     }
     for(size_t i = 0; i < b2->kv_view_.size(); ++i) {
       bool succ = new_block->InsertKv(b2->kv_view_[i].key_view, b2->kv_view_[i].value_view);
-      assert(succ == true);
+      if (succ == false) {
+        throw BptreeExecption("block broken");
+      }
     }
     return new_block_index;
   }
 
   std::string Get(const std::string& key) {
     if (key.size() != super_block_.key_size_) {
-      return "";
+      throw BptreeExecption("wrong key length");
     }
     return cache_[super_block_.root_index_]->Get(key);
   }
 
-  bool Insert(const std::string& key, const std::string& value) {
+  void Insert(const std::string& key, const std::string& value) {
     if (key.size() != super_block_.key_size_ || value.size() != super_block_.value_size_) {
-      return false;
+      throw BptreeExecption("wrong kv length");
     }
     InsertInfo info = cache_[super_block_.root_index_]->Insert(key, value);
     if (info.state_ == InsertInfo::State::Split) {
@@ -110,12 +122,12 @@ class BlockManager {
       old_root->InsertKv(left_block->GetMaxKey(), ConstructIndexByNum(new_blocks.first));
       old_root->InsertKv(right_block->GetMaxKey(), ConstructIndexByNum(new_blocks.second));
     }
-    return true;
+    return;
   }
 
   void Delete(const std::string& key) {
     if (key.size() != super_block_.key_size_) {
-      return;
+      throw BptreeExecption("wrong key length");
     }
     // 根节点的merge信息不处理
     cache_[super_block_.root_index_]->Delete(key);
@@ -133,7 +145,15 @@ class BlockManager {
 
   // 申请一个新的Block
   uint32_t AllocNewBlock(uint32_t height) {
-    uint32_t result = super_block_.bit_map_.GetFirstFreeAndSet();
+    uint32_t result = 0;
+    if (super_block_.free_block_head_ == 0) {
+      ++super_block_.current_max_block_index_;
+      result = super_block_.current_max_block_index_;
+    } else {
+      Block* block = LoadBlock(super_block_.free_block_head_);
+      super_block_.free_block_head_ = block->GetNextFreeIndex();
+      result = block->index_;
+    }
     cache_[result] = std::unique_ptr<Block>(new Block(*this, result, height, super_block_.key_size_, super_block_.value_size_));
     return result;
   }
@@ -152,16 +172,21 @@ class BlockManager {
         prev_block->SetNext(next);
       }
     }
-    super_block_.bit_map_.SetFree(index);
-    cache_.erase(index);
+    block->Clear();
+    block->SetNextFreeIndex(super_block_.free_block_head_);
+    super_block_.free_block_head_ = index;
   }
 
   void ReadBlockFromFile(BlockBase* block, uint32_t index) {
     block->BufInit();
     int ret = fseek(f_, index * block_size, SEEK_SET);
-    assert(ret == 0);
+    if (ret != 0) {
+      throw BptreeExecption("fseek fail");
+    }
     size_t read_ret = fread(block->buf_, block_size, 1, f_);
-    assert(read_ret == 1);
+    if (read_ret != 1) {
+      throw BptreeExecption("fread fail, index == " + std::to_string(index));
+    }
   }
 
   void PrintBpTree() {
@@ -189,9 +214,13 @@ class BlockManager {
   bool FlushBlockToFile(FILE* f, uint32_t index, BlockBase* block) {
     uint32_t offset = index * block_size;
     int ret = fseek(f, static_cast<long>(offset), SEEK_SET);
-    assert(ret == 0);
+    if (ret != 0) {
+      throw BptreeExecption("fseek error");
+    }
     size_t n = fwrite(block->buf_, block_size, 1, f);
-    return n == static_cast<size_t>(block_size);
+    if (n != 1) {
+      throw BptreeExecption("fwrite error");
+    }
   }
 
   // 重构

@@ -121,7 +121,7 @@ DeleteInfo Block::Delete(const std::string& key) {
   return obj;
 }
 
-bool Block::InsertKv(const std::string_view& key, const std::string_view& value) {
+bool Block::InsertKv(const std::string_view& key, const std::string_view& value) noexcept {
   // just for test
   if (kv_view_.size() >= 10) {
     return false;
@@ -167,6 +167,10 @@ void Block::UpdateBlockNextIndex(uint32_t block_index, uint32_t next) {
 
 void Block::Print() {
   std::cout << "block height " << GetHeight() << std::endl;
+  if (next_free_index_ != not_free_flag) {
+    std::cout << "free block " << std::endl;
+    return;
+  }
   std::cout << "prev and next " << prev_ << " " << next_ << std::endl;
   for(int i = 0; i < kv_view_.size(); ++i) {
     std::cout << i << " th kv : " << kv_view_[i].key_view << " " << kv_view_[i].value_view << std::endl;

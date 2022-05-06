@@ -14,9 +14,9 @@ kv大小调整为固定的之后，superblock不适合这种格式了，需要�
 int main() {
   bptree::BlockManager manager("test.db", 1, 5);
   
-  for(int i = 0; i < 18; ++i) {
+  for(int i = 0; i < 40; ++i) {
     std::string key;
-    key.push_back(char(i + 'a'));
+    key.push_back(char('a' + rand() % 25));
     manager.Insert(key, "value");
     std::cout << " after insert key " << key << std::endl << std::endl;
   }
