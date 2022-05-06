@@ -21,8 +21,6 @@ constexpr uint32_t super_height = std::numeric_limits<uint32_t>::max();
 
 constexpr uint32_t not_free_flag = std::numeric_limits<uint32_t>::max();
 
-constexpr uint32_t max_index_length = 10;
-
 // helper function
 
 // tested
@@ -37,17 +35,7 @@ inline uint32_t StringToUInt32t(const std::string_view& value) noexcept {
 
 // tested
 inline std::string ConstructIndexByNum(uint32_t n) noexcept {
-  std::string result = std::to_string(n);
-  if (result.size() > 10) {
-    throw BptreeExecption("cosntruct index error, index_str is too long");
-  }
-  if (result.size() < 10) {
-    std::string tmp;
-    for (int i = 0; i < (10 - result.size()); ++i) {
-      tmp.push_back('0');
-    }
-    return tmp + result;
-  }
+  std::string result((const char*)&n, sizeof(uint32_t));
   return result;
 }
 
@@ -200,7 +188,7 @@ class Block : public BlockBase {
         head_entry_(0),
         free_list_(1) {
     if (height_ != 0) {
-      value_size_ = max_index_length;
+      value_size_ = sizeof(uint32_t);
     }
     InitEmptyEntrys();
   }
@@ -451,7 +439,10 @@ class Block : public BlockBase {
   }
 
   uint32_t GetChildIndex(size_t child_index) const noexcept {
-    return StringToUInt32t(kv_view_[child_index].value_view);
+    uint32_t result = 0;
+    std::string_view index_view = kv_view_[child_index].value_view;
+    memcpy(&result, index_view.data(), index_view.size());
+    return result;
   }
 
   void RemoveByIndex(size_t child_index) {

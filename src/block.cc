@@ -12,6 +12,8 @@
 
 namespace bptree {
 
+// todo 使用二分查找优化
+// 假设key + value占用100字节，一个block大约容纳40个kv对， 这个量级下遍历or二分差别不大。
 std::string Block::Get(const std::string& key) {
   assert(height_ != super_height);
   if (height_ > 0) {

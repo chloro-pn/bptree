@@ -15,9 +15,6 @@ TEST(block, helper) {
   result = bptree::StringToUInt32t(std::string_view("invalid"));
   EXPECT_EQ(result, 0);
 
-  std::string ret = bptree::ConstructIndexByNum(1);
-  EXPECT_EQ(ret, std::string("0000000001"));
-
   uint8_t buf[32];
   size_t offset = bptree::AppendToBuf(buf, uint32_t(12138), 0);
   EXPECT_EQ(offset, sizeof(uint32_t));
