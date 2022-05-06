@@ -1,12 +1,13 @@
 #include "bptree/block.h"
-#include "bptree/block_manager.h"
 
-#include <string>
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <string>
 
-// todo 
+#include "bptree/block_manager.h"
+
+// todo
 // super block的格式问题
 
 namespace bptree {
@@ -14,7 +15,7 @@ namespace bptree {
 std::string Block::Get(const std::string& key) {
   assert(height_ != super_height);
   if (height_ > 0) {
-    for(int i = 0; i < kv_view_.size(); ++i) {
+    for (int i = 0; i < kv_view_.size(); ++i) {
       if (kv_view_[i].key_view >= key) {
         uint32_t child_index = GetChildIndex(i);
         return manager_.LoadBlock(child_index)->Get(key);
@@ -22,7 +23,7 @@ std::string Block::Get(const std::string& key) {
     }
     return "";
   } else {
-    for(int i = 0; i < kv_view_.size(); ++i) {
+    for (int i = 0; i < kv_view_.size(); ++i) {
       if (kv_view_[i].key_view == key) {
         uint32_t offset = GetOffsetByEntryIndex(kv_view_[i].index);
         return std::string(GetEntryValueView(offset));
@@ -44,7 +45,7 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value) {
       return InsertInfo::Ok();
     }
     int32_t child_index = -1;
-    for(int i = 0; i < kv_view_.size(); ++i) {
+    for (int i = 0; i < kv_view_.size(); ++i) {
       if (kv_view_[i].key_view >= key) {
         child_index = i;
         break;
@@ -61,9 +62,9 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value) {
     }
     return DoSplit(child_index, info.key_, info.value_);
   } else {
-    auto it = std::find_if(kv_view_.begin(), kv_view_.end(), [&](const Entry& n) -> bool {
-      return n.key_view == key;
-    });
+    auto it =
+        std::find_if(kv_view_.begin(), kv_view_.end(),
+                     [&](const Entry& n) -> bool { return n.key_view == key; });
     if (it != kv_view_.end()) {
       UpdateEntryValue(it->index, value);
       return InsertInfo::Ok();
@@ -83,7 +84,7 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value) {
 DeleteInfo Block::Delete(const std::string& key) {
   assert(height_ != super_height);
   if (height_ > 0) {
-    for(int i = 0; i < kv_view_.size(); ++i) {
+    for (int i = 0; i < kv_view_.size(); ++i) {
       if (kv_view_[i].key_view >= key) {
         Block* block = manager_.LoadBlock(GetChildIndex(i));
         DeleteInfo info = block->Delete(key);
@@ -103,7 +104,7 @@ DeleteInfo Block::Delete(const std::string& key) {
     // 不存在这个key
     return DeleteInfo::Ok();
   } else {
-    for(auto it = kv_view_.begin(); it != kv_view_.end(); ++it) {
+    for (auto it = kv_view_.begin(); it != kv_view_.end(); ++it) {
       if (it->key_view == key) {
         RemoveEntry(it->index, it == kv_view_.begin() ? 0 : (it - 1)->index);
         kv_view_.erase(it);
@@ -121,7 +122,8 @@ DeleteInfo Block::Delete(const std::string& key) {
   return obj;
 }
 
-bool Block::InsertKv(const std::string_view& key, const std::string_view& value) noexcept {
+bool Block::InsertKv(const std::string_view& key,
+                     const std::string_view& value) noexcept {
   // just for test
   if (kv_view_.size() >= 10) {
     return false;
@@ -142,16 +144,18 @@ bool Block::InsertKv(const std::string_view& key, const std::string_view& value)
   if (prev_index == std::numeric_limits<uint32_t>::max()) {
     entry = InsertEntry(0, std::string(key), std::string(value), full);
   } else {
-    entry = InsertEntry(kv_view_[prev_index].index, std::string(key), std::string(value), full);
+    entry = InsertEntry(kv_view_[prev_index].index, std::string(key),
+                        std::string(value), full);
   }
   if (full == true) {
     return false;
   }
   // todo 优化
   kv_view_.push_back(entry);
-  std::sort(kv_view_.begin(), kv_view_.end(), [](const Entry& n1, const Entry& n2) -> bool {
-    return n1.key_view < n2.key_view;
-  });
+  std::sort(kv_view_.begin(), kv_view_.end(),
+            [](const Entry& n1, const Entry& n2) -> bool {
+              return n1.key_view < n2.key_view;
+            });
   return true;
 }
 
@@ -172,8 +176,9 @@ void Block::Print() {
     return;
   }
   std::cout << "prev and next " << prev_ << " " << next_ << std::endl;
-  for(int i = 0; i < kv_view_.size(); ++i) {
-    std::cout << i << " th kv : " << kv_view_[i].key_view << " " << kv_view_[i].value_view << std::endl;
+  for (int i = 0; i < kv_view_.size(); ++i) {
+    std::cout << i << " th kv : " << kv_view_[i].key_view << " "
+              << kv_view_[i].value_view << std::endl;
   }
 }
 
@@ -194,13 +199,14 @@ void Block::MoveLastElementTo(Block* other) {
   kv_view_.pop_back();
 }
 
-InsertInfo Block::DoSplit(uint32_t child_index, const std::string& key, const std::string& value) {
+InsertInfo Block::DoSplit(uint32_t child_index, const std::string& key,
+                          const std::string& value) {
   // 只有非叶子节点才会调用这里
   assert(height_ > 0);
   uint32_t block_index = GetChildIndex(child_index);
   Block* block = manager_.LoadBlock(block_index);
   auto new_blocks = manager_.BlockSplit(block);
-  
+
   uint32_t new_block_1_index = new_blocks.first;
   uint32_t new_block_2_index = new_blocks.second;
 
@@ -233,10 +239,12 @@ InsertInfo Block::DoSplit(uint32_t child_index, const std::string& key, const st
   std::string block_1_max_key = new_block_1->GetMaxKey();
   std::string block_2_max_key = new_block_2->GetMaxKey();
   // 更新本节点的索引
-  UpdateByIndex(child_index, block_1_max_key, ConstructIndexByNum(new_block_1_index));
+  UpdateByIndex(child_index, block_1_max_key,
+                ConstructIndexByNum(new_block_1_index));
   bool succ = InsertKv(block_2_max_key, ConstructIndexByNum(new_block_2_index));
   if (succ == false) {
-    return InsertInfo::Split(block_2_max_key, ConstructIndexByNum(new_block_2_index));
+    return InsertInfo::Split(block_2_max_key,
+                             ConstructIndexByNum(new_block_2_index));
   }
   return InsertInfo::Ok();
 }
@@ -283,7 +291,8 @@ DeleteInfo Block::DoMerge(uint32_t child_index) {
       UpdateBlockPrevIndex(next_index, new_block_index);
     }
     // 删除过时节点
-    UpdateByIndex(left_child_index, new_block->GetMaxKey(), ConstructIndexByNum(new_block_index));
+    UpdateByIndex(left_child_index, new_block->GetMaxKey(),
+                  ConstructIndexByNum(new_block_index));
     DeleteKvByIndex(right_child_index);
     manager_.DeallocBlock(left_block_index);
     manager_.DeallocBlock(right_block_index);
@@ -294,7 +303,8 @@ DeleteInfo Block::DoMerge(uint32_t child_index) {
     } else {
       left_child->MoveLastElementTo(right_child);
     }
-    auto key_view = UpdateEntryKey(kv_view_[left_child_index].index, left_child->GetMaxKey());
+    auto key_view = UpdateEntryKey(kv_view_[left_child_index].index,
+                                   left_child->GetMaxKey());
     kv_view_[left_child_index].key_view = key_view;
   }
 
@@ -305,4 +315,4 @@ DeleteInfo Block::DoMerge(uint32_t child_index) {
     return DeleteInfo::Ok();
   }
 }
-}
+}  // namespace bptree

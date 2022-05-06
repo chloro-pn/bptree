@@ -1,17 +1,16 @@
 #pragma once
 
-#include "bptree/block.h"
-#include "bptree/util.h"
-#include "bptree/exception.h"
-
-#include <unordered_map>
-#include <string>
-#include <memory>
-#include <vector>
-#include <cstdio>
 #include <cassert>
-
+#include <cstdio>
 #include <iostream>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "bptree/block.h"
+#include "bptree/exception.h"
+#include "bptree/util.h"
 
 namespace bptree {
 
@@ -19,13 +18,15 @@ constexpr uint32_t bit_map_size = 1024;
 
 class BlockManager {
  public:
-  explicit BlockManager(const std::string& file_name, uint32_t key_size = 0, uint32_t value_size = 0) : 
-    file_name_(file_name),
-    super_block_(key_size, value_size) {
+  explicit BlockManager(const std::string& file_name, uint32_t key_size = 0,
+                        uint32_t value_size = 0)
+      : file_name_(file_name), super_block_(key_size, value_size) {
     // 从文件中读取super_block_，填充root_index_。
     if (util::FileNotExist(file_name)) {
       if (key_size == 0 || value_size == 0) {
-        throw BptreeExecption("block manager construct error, key_size and value_size should not be 0");
+        throw BptreeExecption(
+            "block manager construct error, key_size and value_size should not "
+            "be 0");
       }
       // 新建的b+树，初始化super block和其他信息即可
       super_block_.root_index_ = 1;
@@ -33,7 +34,8 @@ class BlockManager {
       super_block_.free_block_head_ = 0;
       super_block_.current_max_block_index_ = 1;
       // root block
-      cache_[super_block_.root_index_] = std::unique_ptr<Block>(new Block(*this, super_block_.root_index_, 1, key_size, value_size));
+      cache_[super_block_.root_index_] = std::unique_ptr<Block>(
+          new Block(*this, super_block_.root_index_, 1, key_size, value_size));
       f_ = fopen(file_name_.c_str(), "wb+");
       if (f_ == nullptr) {
         throw BptreeExecption("file " + file_name + " open fail");
@@ -53,14 +55,16 @@ class BlockManager {
     Block* new_block_1 = LoadBlock(new_block_1_index);
     Block* new_block_2 = LoadBlock(new_block_2_index);
     size_t half_count = block->kv_view_.size() / 2;
-    for(size_t i = 0; i < half_count; ++i) {
-      bool succ = new_block_1->InsertKv(block->kv_view_[i].key_view, block->kv_view_[i].value_view);
+    for (size_t i = 0; i < half_count; ++i) {
+      bool succ = new_block_1->InsertKv(block->kv_view_[i].key_view,
+                                        block->kv_view_[i].value_view);
       if (succ == false) {
         throw BptreeExecption("block broken");
       }
     }
-    for(int i = half_count; i < block->kv_view_.size(); ++i) {
-      bool succ = new_block_2->InsertKv(block->kv_view_[i].key_view, block->kv_view_[i].value_view);
+    for (int i = half_count; i < block->kv_view_.size(); ++i) {
+      bool succ = new_block_2->InsertKv(block->kv_view_[i].key_view,
+                                        block->kv_view_[i].value_view);
       if (succ == false) {
         throw BptreeExecption("block broken");
       }
@@ -71,14 +75,16 @@ class BlockManager {
   uint32_t BlockMerge(Block* b1, Block* b2) {
     uint32_t new_block_index = AllocNewBlock(b1->GetHeight());
     Block* new_block = LoadBlock(new_block_index);
-    for(size_t i = 0; i < b1->kv_view_.size(); ++i) {
-      bool succ = new_block->InsertKv(b1->kv_view_[i].key_view, b1->kv_view_[i].value_view);
+    for (size_t i = 0; i < b1->kv_view_.size(); ++i) {
+      bool succ = new_block->InsertKv(b1->kv_view_[i].key_view,
+                                      b1->kv_view_[i].value_view);
       if (succ == false) {
         throw BptreeExecption("block broken");
       }
     }
-    for(size_t i = 0; i < b2->kv_view_.size(); ++i) {
-      bool succ = new_block->InsertKv(b2->kv_view_[i].key_view, b2->kv_view_[i].value_view);
+    for (size_t i = 0; i < b2->kv_view_.size(); ++i) {
+      bool succ = new_block->InsertKv(b2->kv_view_[i].key_view,
+                                      b2->kv_view_[i].value_view);
       if (succ == false) {
         throw BptreeExecption("block broken");
       }
@@ -94,13 +100,15 @@ class BlockManager {
   }
 
   void Insert(const std::string& key, const std::string& value) {
-    if (key.size() != super_block_.key_size_ || value.size() != super_block_.value_size_) {
+    if (key.size() != super_block_.key_size_ ||
+        value.size() != super_block_.value_size_) {
       throw BptreeExecption("wrong kv length");
     }
     InsertInfo info = cache_[super_block_.root_index_]->Insert(key, value);
     if (info.state_ == InsertInfo::State::Split) {
       // 根节点的分裂
-      uint32_t old_root_height = LoadBlock(super_block_.root_index_)->GetHeight();
+      uint32_t old_root_height =
+          LoadBlock(super_block_.root_index_)->GetHeight();
       uint32_t old_root_index = super_block_.root_index_;
       Block* old_root = LoadBlock(super_block_.root_index_);
       auto new_blocks = BlockSplit(old_root);
@@ -119,8 +127,10 @@ class BlockManager {
       // update root
       old_root->Clear();
       old_root->height_ = old_root_height + 1;
-      old_root->InsertKv(left_block->GetMaxKey(), ConstructIndexByNum(new_blocks.first));
-      old_root->InsertKv(right_block->GetMaxKey(), ConstructIndexByNum(new_blocks.second));
+      old_root->InsertKv(left_block->GetMaxKey(),
+                         ConstructIndexByNum(new_blocks.first));
+      old_root->InsertKv(right_block->GetMaxKey(),
+                         ConstructIndexByNum(new_blocks.second));
     }
     return;
   }
@@ -135,7 +145,8 @@ class BlockManager {
 
   Block* LoadBlock(uint32_t index) {
     if (cache_.count(index) == 0) {
-      std::unique_ptr<Block> new_block = std::unique_ptr<Block>(new Block(*this));
+      std::unique_ptr<Block> new_block =
+          std::unique_ptr<Block>(new Block(*this));
       ReadBlockFromFile(new_block.get(), index);
       new_block->ParseFromBuf();
       cache_[index] = std::move(new_block);
@@ -154,7 +165,9 @@ class BlockManager {
       super_block_.free_block_head_ = block->GetNextFreeIndex();
       result = block->index_;
     }
-    cache_[result] = std::unique_ptr<Block>(new Block(*this, result, height, super_block_.key_size_, super_block_.value_size_));
+    cache_[result] = std::unique_ptr<Block>(
+        new Block(*this, result, height, super_block_.key_size_,
+                  super_block_.value_size_));
     return result;
   }
 
@@ -190,7 +203,7 @@ class BlockManager {
   }
 
   void PrintBpTree() {
-    for(auto& each : cache_) {
+    for (auto& each : cache_) {
       std::cout << " index : " << each.first << std::endl;
       each.second->Print();
     }
@@ -201,7 +214,7 @@ class BlockManager {
       return;
     }
     FlushSuperBlockToFile(f_);
-    for(auto& each : cache_) {
+    for (auto& each : cache_) {
       bool dirty_block = each.second->FlushToBuf();
       if (dirty_block == true) {
         FlushBlockToFile(f_, each.first, each.second.get());
@@ -241,4 +254,4 @@ class BlockManager {
   SuperBlock super_block_;
   FILE* f_;
 };
-}
+}  // namespace bptree

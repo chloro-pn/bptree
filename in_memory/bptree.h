@@ -1,10 +1,10 @@
-#include <cstddef>
-#include <memory>
-#include <vector>
-#include <variant>
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <iostream>
+#include <memory>
+#include <variant>
+#include <vector>
 
 namespace bptree {
 
@@ -39,9 +39,7 @@ struct Split {
   bool happen;
   std::unique_ptr<TreeNode> new_node;
 
-  Split() : happen(false), new_node(nullptr) {
-
-  }
+  Split() : happen(false), new_node(nullptr) {}
 
   static Split Nothing() {
     Split tmp;
@@ -58,7 +56,7 @@ struct Split {
 };
 
 inline std::ostream& print_level(int level) {
-  for(int i = 0; i < level; ++i) {
+  for (int i = 0; i < level; ++i) {
     std::cout << " ";
   }
   std::cout << "[" << level << "]";
@@ -69,19 +67,18 @@ class TreeNode {
  public:
   friend class BPlusTree;
 
-  using ele_type = std::pair<std::string, std::variant<std::string, std::unique_ptr<TreeNode>>>;
+  using ele_type =
+      std::pair<std::string,
+                std::variant<std::string, std::unique_ptr<TreeNode>>>;
 
-  explicit TreeNode(size_t height, size_t dimen) : height_(height), dimen_(dimen) {
-
-  }
+  explicit TreeNode(size_t height, size_t dimen)
+      : height_(height), dimen_(dimen) {}
 
   std::unique_ptr<TreeNode>& GetNode(size_t index) {
     return std::get<1>(kvs_[index].second);
   }
 
-  std::string GetValue(size_t index) {
-    return std::get<0>(kvs_[index]);
-  }
+  std::string GetValue(size_t index) { return std::get<0>(kvs_[index]); }
 
   std::string Get(const std::string& key) {
     if (height_ == 0) {
@@ -91,9 +88,7 @@ class TreeNode {
     }
   }
 
-  size_t ElementSize() const {
-    return kvs_.size();
-  }
+  size_t ElementSize() const { return kvs_.size(); }
 
   ele_type GetLastElement() {
     auto result = std::move(kvs_.back());
@@ -106,7 +101,7 @@ class TreeNode {
     kvs_.erase(kvs_.begin());
     return result;
   }
-  
+
   std::string GetMaxKey() {
     assert(kvs_.empty() == false);
     return kvs_.back().first;
@@ -131,17 +126,19 @@ class TreeNode {
   void Print(int level) const {
     print_level(level) << " height == " << height_ << std::endl;
     if (height_ == 0) {
-      for(auto& each : kvs_) {
-        print_level(level) << " key : " << each.first << " value : " << std::get<0>(each.second) << std::endl;
+      for (auto& each : kvs_) {
+        print_level(level) << " key : " << each.first
+                           << " value : " << std::get<0>(each.second)
+                           << std::endl;
       }
     } else {
-      for(auto& each : kvs_) {
+      for (auto& each : kvs_) {
         print_level(level) << " key : " << each.first << std::endl;
         std::get<1>(each.second)->Print(level + 1);
       }
     }
   }
-  
+
  private:
   // 叶节点 == 0， 索引节点 > 0.
   size_t height_;
@@ -158,9 +155,10 @@ class TreeNode {
 
   void insertElement(ele_type&& obj) {
     kvs_.push_back(std::move(obj));
-    std::sort(kvs_.begin(), kvs_.end(), [](const ele_type& ele1, const ele_type& ele2) -> bool {
-      return ele1.first < ele2.first;
-    });
+    std::sort(kvs_.begin(), kvs_.end(),
+              [](const ele_type& ele1, const ele_type& ele2) -> bool {
+                return ele1.first < ele2.first;
+              });
   }
 
   // 将子节点c2的数据合并在c1中，删除c2子节点，并返回c1下标。
@@ -172,7 +170,7 @@ class TreeNode {
       return MergeChild(c2, c1);
     }
     auto& eles = GetNode(c2)->kvs_;
-    for(auto&& each : eles) {
+    for (auto&& each : eles) {
       GetNode(c1)->kvs_.push_back(std::move(each));
     }
     updateMaxKey(c1);
@@ -186,7 +184,7 @@ class TreeNode {
     bool insert = false;
     size_t insert_index = 0;
     Split split;
-    for(int i = 0; i < kvs_.size(); ++i) {
+    for (int i = 0; i < kvs_.size(); ++i) {
       if (key <= kvs_[i].first) {
         split = GetNode(i)->Insert(key, value);
         insert_index = i;
@@ -197,7 +195,8 @@ class TreeNode {
     // 插入到最后一个子节点中
     if (insert == false) {
       if (kvs_.empty() == true) {
-        kvs_.push_back({key, std::unique_ptr<TreeNode>(new TreeNode(height_ - 1, dimen_))});
+        kvs_.push_back({key, std::unique_ptr<TreeNode>(
+                                 new TreeNode(height_ - 1, dimen_))});
         split = std::get<1>(kvs_.back().second)->Insert(key, value);
       } else {
         kvs_.back().first = key;
@@ -209,25 +208,26 @@ class TreeNode {
   }
 
   Split insertLeaf(const std::string& key, const std::string& value) {
-    for(int i = 0; i < kvs_.size(); ++i) {
+    for (int i = 0; i < kvs_.size(); ++i) {
       if (kvs_[i].first == key) {
         std::get<0>(kvs_[i].second) = value;
         return Split::Nothing();
       }
     }
     kvs_.push_back({key, value});
-    std::sort(kvs_.begin(), kvs_.end(), [](const ele_type& v1, const ele_type& v2) -> bool {
-      return v1.first < v2.first;
-    });
+    std::sort(kvs_.begin(), kvs_.end(),
+              [](const ele_type& v1, const ele_type& v2) -> bool {
+                return v1.first < v2.first;
+              });
     if (kvs_.size() > dimen_) {
       int split_num = kvs_.size() / 2;
       std::unique_ptr<TreeNode> new_node(new TreeNode(0, dimen_));
       int move_num = 0;
-      for(int i = split_num; i < kvs_.size(); ++i) {
+      for (int i = split_num; i < kvs_.size(); ++i) {
         new_node->kvs_.push_back(std::move(kvs_[i]));
         move_num += 1;
       }
-      for(int i = 0; i < move_num; ++i) {
+      for (int i = 0; i < move_num; ++i) {
         kvs_.pop_back();
       }
       return Split::DoSplit(std::move(new_node));
@@ -237,7 +237,7 @@ class TreeNode {
   }
 
   std::string getInner(const std::string& key) {
-    for(int i = 0; i < kvs_.size(); ++i) {
+    for (int i = 0; i < kvs_.size(); ++i) {
       if (key <= kvs_[i].first) {
         return GetNode(i)->Get(key);
       }
@@ -246,7 +246,7 @@ class TreeNode {
   }
 
   std::string getLeaf(const std::string& key) {
-    for(int i = 0; i < kvs_.size(); ++i) {
+    for (int i = 0; i < kvs_.size(); ++i) {
       if (key == kvs_[i].first) {
         return GetValue(i);
       }
@@ -255,7 +255,7 @@ class TreeNode {
   }
 
   Merge deleteLeaf(const std::string& key) {
-    for(int i = 0; i < kvs_.size(); ++i) {
+    for (int i = 0; i < kvs_.size(); ++i) {
       if (key == kvs_[i].first) {
         auto it = kvs_.begin();
         std::advance(it, i);
@@ -271,7 +271,7 @@ class TreeNode {
   }
 
   Merge deleteInner(const std::string& key) {
-    for(int i = 0; i < kvs_.size(); ++i) {
+    for (int i = 0; i < kvs_.size(); ++i) {
       if (key <= kvs_[i].first) {
         Merge merge = GetNode(i)->Delete(key);
         if (key == kvs_[i].first && GetNode(i)->ElementSize() != 0) {
@@ -300,11 +300,11 @@ class TreeNode {
       int split_num = kvs_.size() / 2;
       std::unique_ptr<TreeNode> new_node(new TreeNode(height_, dimen_));
       int move_num = 0;
-      for(int i = split_num; i < kvs_.size(); ++i) {
+      for (int i = split_num; i < kvs_.size(); ++i) {
         new_node->kvs_.push_back(std::move(kvs_[i]));
         move_num += 1;
       }
-      for(int i = 0; i < move_num; ++i) {
+      for (int i = 0; i < move_num; ++i) {
         kvs_.pop_back();
       }
       return Split::DoSplit(std::move(new_node));
@@ -353,7 +353,7 @@ class TreeNode {
         size_t new_index = MergeChild(delete_index, delete_index + 1);
         if (ElementSize() < CeilD2(dimen_)) {
           return Merge::DoMerge();
-        }        
+        }
       }
     }
     return Merge::Nothing();
@@ -362,10 +362,8 @@ class TreeNode {
 
 class BPlusTree {
  public:
-  explicit BPlusTree(size_t dimen) : height_(1), dimen_(dimen) {
+  explicit BPlusTree(size_t dimen) : height_(1), dimen_(dimen) {}
 
-  }
-  
   std::string Get(const std::string& key) {
     if (root_ != nullptr) {
       return root_->Get(key);
@@ -380,7 +378,8 @@ class BPlusTree {
     Split split = root_->Insert(key, value);
     if (split.happen == true) {
       auto old_root = std::move(root_);
-      root_ = std::unique_ptr<TreeNode>(new TreeNode(old_root->height_ + 1, dimen_));
+      root_ = std::unique_ptr<TreeNode>(
+          new TreeNode(old_root->height_ + 1, dimen_));
       std::string key1 = old_root->GetMaxKey();
       std::string key2 = split.new_node->GetMaxKey();
       root_->kvs_.push_back({key1, std::move(old_root)});
@@ -397,9 +396,7 @@ class BPlusTree {
     root_->Delete(key);
   }
 
-  void Print() const {
-    root_->Print(0);
-  }
+  void Print() const { root_->Print(0); }
 
  private:
   size_t height_;
@@ -407,4 +404,4 @@ class BPlusTree {
   std::unique_ptr<TreeNode> root_;
 };
 
-} // namespace bptree
+}  // namespace bptree

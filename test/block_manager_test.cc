@@ -1,6 +1,6 @@
-#include "gtest/gtest.h"
-
 #include "bptree/block_manager.h"
+
+#include "gtest/gtest.h"
 
 TEST(block_manager, all) {
   bptree::BlockManager manager("test.db", 1, 5);
