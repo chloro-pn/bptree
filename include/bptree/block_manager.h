@@ -7,6 +7,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <functional>
 
 #include "bptree/block.h"
 #include "bptree/exception.h"
@@ -15,6 +16,12 @@
 namespace bptree {
 
 constexpr uint32_t bit_map_size = 1024;
+
+enum class GetRangeOption {
+  SKIP,
+  SELECT,
+  STOP,
+};
 
 class BlockManager {
  public:
@@ -99,6 +106,38 @@ class BlockManager {
       throw BptreeExecption("wrong key length");
     }
     return cache_[super_block_.root_index_]->Get(key);
+  }
+
+  // 范围查找
+  std::vector<std::pair<std::string, std::string>> GetRange(const std::string& key, std::function<GetRangeOption(const Entry& entry)> functor) {
+    if (key.size() != super_block_.key_size_) {
+      throw BptreeExecption("wrong key length");
+    }
+    auto location = cache_[super_block_.root_index_]->GetBlockIndexContainKey(key);
+    if (location.first == 0) {
+      return {};
+    }
+    std::vector<std::pair<std::string, std::string>> result;
+    uint32_t block_index = location.first;
+    uint32_t view_index = location.second;
+    while(block_index != 0) {
+      Block* block = LoadBlock(block_index);
+      for(size_t i = view_index; i < block->kv_view_.size(); ++i) {
+        const Entry& entry = block->kv_view_[i];
+        GetRangeOption state = functor(entry);
+        if (state == GetRangeOption::SKIP) {
+          continue;
+        } else if (state == GetRangeOption::SELECT) {
+          result.push_back({ std::string(entry.key_view), std::string(entry.value_view) });
+        } else {
+          return result;
+        }
+      }
+      // 下一个block
+      block_index = block->next_;
+      view_index = 0;
+    }
+    return result;
   }
 
   void Insert(const std::string& key, const std::string& value) {

@@ -12,6 +12,26 @@
 
 namespace bptree {
 
+std::pair<uint32_t, uint32_t> Block::GetBlockIndexContainKey(const std::string& key) {
+  assert(height_ != super_height);
+  if (height_ > 0) {
+    for(size_t i = 0; i < kv_view_.size(); ++i) {
+      if (kv_view_[i].key_view >= key) {
+        uint32_t child_index = GetChildIndex(i);
+        return manager_.LoadBlock(child_index)->GetBlockIndexContainKey(key);
+      }
+    }
+    return {0, 0};
+  } else {
+    for(size_t i = 0; i < kv_view_.size(); ++i) {
+      if (kv_view_[i].key_view == key) {
+        return {index_, i};
+      }
+    }
+  }
+  return {0, 0};
+}
+
 // todo 使用二分查找优化
 // 假设key + value占用100字节，一个block大约容纳40个kv对，
 // 这个量级下遍历or二分差别不大。

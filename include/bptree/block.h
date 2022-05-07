@@ -186,7 +186,8 @@ class BlockBase {
   bool BufInited() const noexcept { return buf_init_ == true; }
 
   bool CheckForDamage() const noexcept {
-    uint32_t crc = crc32((const char*)&buf_[sizeof(crc_)], block_size - sizeof(crc_));
+    uint32_t crc =
+        crc32((const char*)&buf_[sizeof(crc_)], block_size - sizeof(crc_));
     if (crc != crc_) {
       return true;
     }
@@ -212,6 +213,7 @@ struct Entry {
 class Block : public BlockBase {
  public:
   friend class BlockManager;
+  friend class Iterator;
 
   // 新建的block构造函数
   Block(BlockManager& manager, uint32_t index, uint32_t height,
@@ -251,6 +253,10 @@ class Block : public BlockBase {
     }
     return std::string(kv_view_.back().key_view);
   }
+
+  // 查找含有key的leaf block的index以及view_index
+  // 如果不存在，返回 {0, 0}
+  std::pair<uint32_t, uint32_t> GetBlockIndexContainKey(const std::string& key);
 
   std::string Get(const std::string& key);
 

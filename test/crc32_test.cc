@@ -1,5 +1,6 @@
-#include "gtest/gtest.h"
 #include "crc32.h"
+
+#include "gtest/gtest.h"
 
 // https://www.lammertbies.nl/comm/info/crc-calculation
 // http://chrisballance.com/wp-content/uploads/2015/10/CRC-Primer.html
