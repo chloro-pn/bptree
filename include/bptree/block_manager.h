@@ -49,6 +49,8 @@ class BlockManager {
     }
   }
 
+  ~BlockManager() { FlushToFile(); }
+
   std::pair<uint32_t, uint32_t> BlockSplit(Block* block) {
     uint32_t new_block_1_index = AllocNewBlock(block->GetHeight());
     uint32_t new_block_2_index = AllocNewBlock(block->GetHeight());
@@ -148,7 +150,7 @@ class BlockManager {
       std::unique_ptr<Block> new_block =
           std::unique_ptr<Block>(new Block(*this));
       ReadBlockFromFile(new_block.get(), index);
-      new_block->ParseFromBuf();
+      new_block->Parse();
       cache_[index] = std::move(new_block);
     }
     return cache_[index].get();
@@ -215,7 +217,7 @@ class BlockManager {
     }
     FlushSuperBlockToFile(f_);
     for (auto& each : cache_) {
-      bool dirty_block = each.second->FlushToBuf();
+      bool dirty_block = each.second->Flush();
       if (dirty_block == true) {
         FlushBlockToFile(f_, each.first, each.second.get());
       }
@@ -238,13 +240,13 @@ class BlockManager {
 
   // 重构
   void FlushSuperBlockToFile(FILE* f) {
-    super_block_.FlushToBuf();
+    super_block_.Flush();
     FlushBlockToFile(f, 0, &super_block_);
   }
 
   void ParseSuperBlockFromFile() {
     ReadBlockFromFile(&super_block_, 0);
-    super_block_.ParseFromBuf();
+    super_block_.Parse();
     LoadBlock(super_block_.root_index_);
   }
 

@@ -53,6 +53,8 @@ TEST(block, constructor) {
   bptree::Block block(manager, 2, 0, 1, 5);
   EXPECT_EQ(block.GetHeight(), 0);
 
+  EXPECT_EQ(block.GetEntrySize(), sizeof(uint32_t) + 1 + 5);
+
   std::string value = block.Get("a");
   EXPECT_EQ(value, "");
   block.Insert("a", "value");
@@ -82,4 +84,31 @@ TEST(block, constructor) {
   value_v = "vvvvv";
   block.UpdateEntryValue(block.head_entry_, std::string(value_v));
   EXPECT_EQ(value_v, block.Get("c"));
+
+  block.SetEntryKey(offset, "d");
+  block.SetEntryValue(offset, "newvv");
+  key = "";
+  value_v = "";
+  index = block.ParseEntry(block.head_entry_, key, value_v);
+  EXPECT_EQ(key, "d");
+  EXPECT_EQ(value_v, "newvv");
+  EXPECT_EQ(index, 0);
+
+  bool full = false;
+  auto entry = block.InsertEntry(block.head_entry_, "e", "value", full);
+  EXPECT_EQ(full, false);
+  EXPECT_EQ(block.GetEntryNext(offset), entry.index);
+  EXPECT_EQ(block.GetEntryNext(block.GetOffsetByEntryIndex(entry.index)), 0);
+  EXPECT_EQ(entry.key_view, "e");
+  EXPECT_EQ(entry.value_view, "value");
+
+  block.UpdateByIndex(0, "f", "ffval");
+  offset = block.GetOffsetByEntryIndex(block.head_entry_);
+  EXPECT_EQ(block.GetEntryKeyView(offset), "f");
+  EXPECT_EQ(block.GetEntryValueView(offset), "ffval");
+
+  block.RemoveEntry(block.head_entry_, 0);
+  block.RemoveEntry(block.head_entry_, 0);
+  EXPECT_EQ(block.head_entry_, 0);
+  EXPECT_EQ(block.free_list_, 1);
 }

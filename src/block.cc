@@ -13,11 +13,12 @@
 namespace bptree {
 
 // todo 使用二分查找优化
-// 假设key + value占用100字节，一个block大约容纳40个kv对， 这个量级下遍历or二分差别不大。
+// 假设key + value占用100字节，一个block大约容纳40个kv对，
+// 这个量级下遍历or二分差别不大。
 std::string Block::Get(const std::string& key) {
   assert(height_ != super_height);
   if (height_ > 0) {
-    for (int i = 0; i < kv_view_.size(); ++i) {
+    for (size_t i = 0; i < kv_view_.size(); ++i) {
       if (kv_view_[i].key_view >= key) {
         uint32_t child_index = GetChildIndex(i);
         return manager_.LoadBlock(child_index)->Get(key);
@@ -25,7 +26,7 @@ std::string Block::Get(const std::string& key) {
     }
     return "";
   } else {
-    for (int i = 0; i < kv_view_.size(); ++i) {
+    for (size_t i = 0; i < kv_view_.size(); ++i) {
       if (kv_view_[i].key_view == key) {
         uint32_t offset = GetOffsetByEntryIndex(kv_view_[i].index);
         return std::string(GetEntryValueView(offset));
@@ -47,7 +48,7 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value) {
       return InsertInfo::Ok();
     }
     int32_t child_index = -1;
-    for (int i = 0; i < kv_view_.size(); ++i) {
+    for (size_t i = 0; i < kv_view_.size(); ++i) {
       if (kv_view_[i].key_view >= key) {
         child_index = i;
         break;
@@ -86,7 +87,7 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value) {
 DeleteInfo Block::Delete(const std::string& key) {
   assert(height_ != super_height);
   if (height_ > 0) {
-    for (int i = 0; i < kv_view_.size(); ++i) {
+    for (size_t i = 0; i < kv_view_.size(); ++i) {
       if (kv_view_[i].key_view >= key) {
         Block* block = manager_.LoadBlock(GetChildIndex(i));
         DeleteInfo info = block->Delete(key);
@@ -178,7 +179,7 @@ void Block::Print() {
     return;
   }
   std::cout << "prev and next " << prev_ << " " << next_ << std::endl;
-  for (int i = 0; i < kv_view_.size(); ++i) {
+  for (size_t i = 0; i < kv_view_.size(); ++i) {
     std::cout << i << " th kv : " << kv_view_[i].key_view << " "
               << kv_view_[i].value_view << std::endl;
   }

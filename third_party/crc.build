@@ -1,0 +1,9 @@
+package(default_visibility = ["//visibility:public"])
+
+# https://docs.bazel.build/versions/master/be/c-cpp.html#cc_library
+cc_library(
+  name = "crc32c",
+  srcs = glob(["crc/*.c", "crc/*.h", "crc/*.cpp"]),
+  hdrs = ["crc/crc32.h"],
+  includes = ["crc/"],
+)
