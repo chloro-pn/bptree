@@ -11,6 +11,8 @@
 #include <type_traits>
 #include <vector>
 
+#include <iostream>
+
 #include "bptree/exception.h"
 #include "crc32.h"
 
@@ -142,10 +144,15 @@ struct DeleteInfo {
 
 class BlockBase {
  public:
-  friend class BlockManager;
-  BlockBase() noexcept : crc_(0), index_(0), height_(0), buf_init_(false) {}
+  BlockBase() noexcept
+      : crc_(0), index_(0), height_(0), buf_init_(false), dirty_(true) {}
+  
   BlockBase(uint32_t index, uint32_t height) noexcept
-      : crc_(0), index_(index), height_(height), buf_init_(false) {}
+      : crc_(0),
+        index_(index),
+        height_(height),
+        buf_init_(false),
+        dirty_(false) {}
 
   void Parse() noexcept {
     assert(BufInited() == true);
@@ -157,17 +164,22 @@ class BlockBase {
     if (CheckForDamage() == true) {
       throw BptreeExecption("block damage");
     }
+    dirty_ = false;
   }
 
   bool Flush() noexcept {
+    if (dirty_ == false) {
+      return false;
+    }
     uint32_t offset = 0;
     offset = AppendToBuf(buf_, crc_, offset);
     offset = AppendToBuf(buf_, index_, offset);
     offset = AppendToBuf(buf_, height_, offset);
-    bool dirty = FlushToBuf(offset);
+    FlushToBuf(offset);
     // calculate crc and update.
     crc_ = crc32((const char*)&buf_[sizeof(crc_)], block_size - sizeof(crc_));
     AppendToBuf(buf_, crc_, 0);
+    dirty_ = false;
     return true;
   }
 
@@ -175,7 +187,7 @@ class BlockBase {
     return sizeof(crc_) + sizeof(index_) + sizeof(height_);
   }
 
-  virtual bool FlushToBuf(size_t offset) noexcept = 0;
+  virtual void FlushToBuf(size_t offset) noexcept = 0;
   virtual void ParseFromBuf(size_t offset) noexcept = 0;
 
   void BufInit() noexcept {
@@ -194,14 +206,40 @@ class BlockBase {
     return false;
   }
 
+  uint32_t GetIndex() const noexcept { return index_; }
+
+  void SetIndex(uint32_t index) noexcept {
+    dirty_ = true;
+    index_ = index;
+  }
+
+  uint32_t GetHeight() const noexcept { return height_; }
+
+  void SetHeight(uint32_t height) noexcept {
+    dirty_ = true;
+    height_ = height;
+  }
+
+  uint8_t* GetBuf() noexcept {
+    return buf_;
+  }
+
+  void SetDirty() {
+    dirty_ = true;
+  }
+
+  virtual ~BlockBase() { 
+    assert(dirty_ == false); }
+
  protected:
   uint8_t buf_[block_size];
-  uint32_t crc_;
-  uint32_t index_;
-  uint32_t height_;
+  bool dirty_;
 
  private:
   bool buf_init_;
+  uint32_t crc_;
+  uint32_t index_;
+  uint32_t height_;
 };
 
 struct Entry {
@@ -212,9 +250,6 @@ struct Entry {
 
 class Block : public BlockBase {
  public:
-  friend class BlockManager;
-  friend class Iterator;
-
   // 新建的block构造函数
   Block(BlockManager& manager, uint32_t index, uint32_t height,
         uint32_t key_size, uint32_t value_size) noexcept
@@ -227,7 +262,7 @@ class Block : public BlockBase {
         value_size_(value_size),
         head_entry_(0),
         free_list_(1) {
-    if (height_ != 0) {
+    if (GetHeight() != 0) {
       value_size_ = sizeof(uint32_t);
     }
     InitEmptyEntrys();
@@ -237,14 +272,19 @@ class Block : public BlockBase {
   explicit Block(BlockManager& manager) noexcept
       : BlockBase(), manager_(manager) {}
 
+  ~Block() {
+
+  }
+
   uint32_t GetNextFreeIndex() const noexcept {
     assert(next_free_index_ != not_free_flag);
     return next_free_index_;
   }
 
-  void SetNextFreeIndex(uint32_t nfi) noexcept { next_free_index_ = nfi; }
-
-  uint32_t GetHeight() const noexcept { return height_; }
+  void SetNextFreeIndex(uint32_t nfi) noexcept {
+    dirty_ = true;
+    next_free_index_ = nfi;
+  }
 
   // tested
   std::string GetMaxKey() const noexcept {
@@ -266,7 +306,7 @@ class Block : public BlockBase {
 
   void Print();
 
-  bool FlushToBuf(size_t offset) noexcept override {
+  void FlushToBuf(size_t offset) noexcept override {
     offset = AppendToBuf(buf_, next_free_index_, offset);
     offset = AppendToBuf(buf_, prev_, offset);
     offset = AppendToBuf(buf_, next_, offset);
@@ -274,7 +314,6 @@ class Block : public BlockBase {
     offset = AppendToBuf(buf_, value_size_, offset);
     offset = AppendToBuf(buf_, head_entry_, offset);
     offset = AppendToBuf(buf_, free_list_, offset);
-    return true;
   }
 
   void ParseFromBuf(size_t offset) noexcept override {
@@ -295,6 +334,32 @@ class Block : public BlockBase {
     }
   }
 
+  void SetPrev(uint32_t prev) noexcept {
+    prev_ = prev;
+    dirty_ = true;
+  }
+
+  void SetNext(uint32_t next) noexcept {
+    next_ = next;
+    dirty_ = true;
+  }
+
+  uint32_t GetPrev() const noexcept {
+    return prev_;
+  }
+
+  uint32_t GetNext() const noexcept {
+    return next_;
+  }
+
+  const std::vector<Entry>& GetKVView() const noexcept {
+    return kv_view_;
+  }
+
+  const Entry& GetViewByIndex(size_t i) const noexcept {
+    return kv_view_[i];
+  }
+
  private:
   BlockManager& manager_;
   uint32_t next_free_index_;
@@ -304,12 +369,7 @@ class Block : public BlockBase {
   uint32_t value_size_;
   uint32_t free_list_;
   uint32_t head_entry_;
-
   std::vector<Entry> kv_view_;
-
-  void SetPrev(uint32_t prev) noexcept { prev_ = prev; }
-
-  void SetNext(uint32_t next) noexcept { next_ = next; }
 
   uint32_t GetMetaSpace() const noexcept {
     return BlockBase::GetUsedSpace() + sizeof(next_free_index_) +
@@ -352,6 +412,7 @@ class Block : public BlockBase {
   }
 
   void SetEntryNext(uint32_t index, uint32_t next) noexcept {
+    dirty_ = true;
     uint32_t offset = GetOffsetByEntryIndex(index);
     assert(offset + sizeof(next) <= block_size);
     memcpy(&buf_[offset], &next, sizeof(next));
@@ -367,6 +428,7 @@ class Block : public BlockBase {
   // tested
   std::string_view SetEntryKey(uint32_t offset,
                                const std::string& key) noexcept {
+    dirty_ = true;
     assert(key.size() == key_size_);
     memcpy(&buf_[offset + sizeof(uint32_t)], key.data(), key_size_);
     return std::string_view((const char*)&buf_[offset + sizeof(uint32_t)],
@@ -382,6 +444,7 @@ class Block : public BlockBase {
   // tested
   std::string_view SetEntryValue(uint32_t offset,
                                  const std::string& value) noexcept {
+    dirty_ = true;
     assert(value.size() == value_size_);
     memcpy(&buf_[offset + sizeof(uint32_t) + key_size_], value.data(),
            value_size_);
@@ -404,6 +467,7 @@ class Block : public BlockBase {
 
   // tested
   void RemoveEntry(uint32_t index, uint32_t prev_index) noexcept {
+    dirty_ = true;
     uint32_t offset = GetOffsetByEntryIndex(index);
     uint32_t next = GetEntryNext(offset);
     if (prev_index != 0) {
@@ -425,6 +489,7 @@ class Block : public BlockBase {
       full = true;
       return Entry();
     }
+    dirty_ = true;
     uint32_t new_index = free_list_;
     uint32_t new_offset = GetOffsetByEntryIndex(free_list_);
     free_list_ = GetEntryNext(new_offset);
@@ -459,11 +524,8 @@ class Block : public BlockBase {
     uint32_t offset = GetOffsetByEntryIndex(index);
     return SetEntryValue(offset, value);
   }
-
-  /*
-   * 以下函数是对Entry系列函数的封装，保证kv_view_和buf内数据的一致性。
-   */
-
+ 
+ public:
   bool InsertKv(const std::string_view& key,
                 const std::string_view& value) noexcept;
 
@@ -544,15 +606,18 @@ class Block : public BlockBase {
 
 class SuperBlock : public BlockBase {
  public:
+  friend class BlockManager;
   SuperBlock(uint32_t key_size, uint32_t value_size) noexcept
       : BlockBase(0, super_height),
         root_index_(0),
         key_size_(key_size),
         value_size_(value_size),
         free_block_head_(0),
-        current_max_block_index_(1) {}
+        current_max_block_index_(1) {
+          dirty_ = true;
+        }
 
-  bool FlushToBuf(size_t offset) noexcept override {
+  void FlushToBuf(size_t offset) noexcept override {
     offset = AppendToBuf(buf_, root_index_, offset);
     offset = AppendToBuf(buf_, key_size_, offset);
     offset = AppendToBuf(buf_, value_size_, offset);

@@ -1,9 +1,12 @@
 todo:
 * 完善单元测试 [doing]
-* 完善错误处理 [doing]
-* block的crc校验和cache策略，是上条的基础
-* 记录统计信息
-* 提供迭代器
+* 完善错误处理
+* block的crc校验和cache策略，是上条的基础 [doing]
+* 记录统计信息和日志
+* 提供迭代器 [delete]
 * 提供基于wal的崩溃恢复机制
-* 重构page磁盘管理 （目前的这种位图形式还是不太行，消耗空间太大）[doing]
+* 重构page磁盘管理 （目前的这种位图形式还是不太行，消耗空间太大）[done]
 * 处理字节序问题
+* block的dirty机制，减少不必要的刷盘操作 [done]
+* cache希望block的析构函数中进行资源释放（调用manager进行刷盘），但是需要在析构函数中调用虚函数，因此需要修改cache，提供destructor前注册机制 [done]
+* cache目前的实现有bug，Block生命周期管理不明确，需要修改接口

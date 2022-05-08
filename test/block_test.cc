@@ -49,7 +49,7 @@ TEST(block, helper) {
 }
 
 TEST(block, constructor) {
-  bptree::BlockManager manager("test2.db", 1, 5);
+  bptree::BlockManager manager("test3.db", 1, 5);
   bptree::Block block(manager, 2, 0, 1, 5);
   EXPECT_EQ(block.GetHeight(), 0);
 
@@ -111,4 +111,5 @@ TEST(block, constructor) {
   block.RemoveEntry(block.head_entry_, 0);
   EXPECT_EQ(block.head_entry_, 0);
   EXPECT_EQ(block.free_list_, 1);
+  block.dirty_ = false;
 }
