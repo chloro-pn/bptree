@@ -21,7 +21,7 @@ TEST(cache, all) {
         return;
       });
   // 0
-  uint32_t v = cache.Get(0);
+  uint32_t v = cache.Get(0).Get();
   EXPECT_EQ(v, 0);
   // 2 -> 0
   cache.Get(2);

@@ -4,6 +4,7 @@
 
 int main() {
   bptree::BlockManager manager("test.db", 1, 5);
+  std::cout << "after construct" << std::endl;
   std::string v = manager.Get("a");
   std::cout << "value == " << v << std::endl;
   for (int i = 0; i < 20; ++i) {

@@ -168,17 +168,22 @@ class BlockBase {
   }
 
   bool Flush() noexcept {
+    std::cout << 1 << std::endl;
     if (dirty_ == false) {
       return false;
     }
+    std::cout << 2 << std::endl;
     uint32_t offset = 0;
     offset = AppendToBuf(buf_, crc_, offset);
     offset = AppendToBuf(buf_, index_, offset);
     offset = AppendToBuf(buf_, height_, offset);
+    std::cout << 3 << std::endl;
     FlushToBuf(offset);
     // calculate crc and update.
     crc_ = crc32((const char*)&buf_[sizeof(crc_)], block_size - sizeof(crc_));
+    std::cout << 4 << std::endl;
     AppendToBuf(buf_, crc_, 0);
+    std::cout << 5 << std::endl;
     dirty_ = false;
     return true;
   }

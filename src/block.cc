@@ -20,7 +20,7 @@ std::pair<uint32_t, uint32_t> Block::GetBlockIndexContainKey(
     for (size_t i = 0; i < kv_view_.size(); ++i) {
       if (kv_view_[i].key_view >= key) {
         uint32_t child_index = GetChildIndex(i);
-        return manager_.GetBlock(child_index).GetBlockIndexContainKey(key);
+        return manager_.GetBlock(child_index).Get().GetBlockIndexContainKey(key);
       }
     }
     return {0, 0};
@@ -43,7 +43,7 @@ std::string Block::Get(const std::string& key) {
     for (size_t i = 0; i < kv_view_.size(); ++i) {
       if (kv_view_[i].key_view >= key) {
         uint32_t child_index = GetChildIndex(i);
-        return manager_.GetBlock(child_index).Get(key);
+        return manager_.GetBlock(child_index).Get().Get(key);
       }
     }
     return std::string();
@@ -63,7 +63,7 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value) {
   if (GetHeight() > 0) {
     if (kv_view_.empty() == true) {
       uint32_t child_block_index = manager_.AllocNewBlock(GetHeight() - 1);
-      manager_.GetBlock(child_block_index).Insert(key, value);
+      manager_.GetBlock(child_block_index).Get().Insert(key, value);
       bool succ = InsertKv(key, ConstructIndexByNum(child_block_index));
       // 只插入一个元素，不应该失败
       assert(succ == true);
@@ -81,7 +81,7 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value) {
       UpdateEntryKey(kv_view_.back().index, key);
     }
     uint32_t child_block_index = GetChildIndex(child_index);
-    InsertInfo info = manager_.GetBlock(child_block_index).Insert(key, value);
+    InsertInfo info = manager_.GetBlock(child_block_index).Get().Insert(key, value);
     if (info.state_ == InsertInfo::State::Ok) {
       return info;
     }
@@ -111,12 +111,12 @@ DeleteInfo Block::Delete(const std::string& key) {
   if (GetHeight() > 0) {
     for (size_t i = 0; i < kv_view_.size(); ++i) {
       if (kv_view_[i].key_view >= key) {
-        Block& block = manager_.GetBlock(GetChildIndex(i));
-        DeleteInfo info = block.Delete(key);
+        auto block = manager_.GetBlock(GetChildIndex(i));
+        DeleteInfo info = block.Get().Delete(key);
         assert(info.state_ != DeleteInfo::State::Invalid);
-        if (kv_view_[i].key_view == key && block.kv_view_.size() != 0) {
+        if (kv_view_[i].key_view == key && block.Get().GetKVView().size() != 0) {
           // 更新maxkey的记录，如果子节点block的kv为空不需要处理，因为后面会在DoMerge中删除这个节点
-          UpdateEntryKey(kv_view_[i].index, block.GetMaxKey());
+          UpdateEntryKey(kv_view_[i].index, block.Get().GetMaxKey());
         }
         if (info.state_ == DeleteInfo::State::Ok) {
           return info;
@@ -185,13 +185,13 @@ bool Block::InsertKv(const std::string_view& key,
 }
 
 void Block::UpdateBlockPrevIndex(uint32_t block_index, uint32_t prev) {
-  Block& block = manager_.GetBlock(block_index);
-  block.SetPrev(prev);
+  auto block = manager_.GetBlock(block_index);
+  block.Get().SetPrev(prev);
 }
 
 void Block::UpdateBlockNextIndex(uint32_t block_index, uint32_t next) {
-  Block& block = manager_.GetBlock(block_index);
-  block.SetNext(next);
+  auto block = manager_.GetBlock(block_index);
+  block.Get().SetNext(next);
 }
 
 void Block::Print() {
@@ -229,40 +229,41 @@ InsertInfo Block::DoSplit(uint32_t child_index, const std::string& key,
   // 只有非叶子节点才会调用这里
   assert(GetHeight() > 0);
   uint32_t block_index = GetChildIndex(child_index);
-  Block& block = manager_.GetBlock(block_index);
-  auto new_blocks = manager_.BlockSplit(&block);
+  auto block = manager_.GetBlock(block_index);
+  auto new_blocks = manager_.BlockSplit(&block.Get());
 
   uint32_t new_block_1_index = new_blocks.first;
   uint32_t new_block_2_index = new_blocks.second;
 
-  Block& new_block_1 = manager_.GetBlock(new_block_1_index);
-  Block& new_block_2 = manager_.GetBlock(new_block_2_index);
+  auto new_block_1 = manager_.GetBlock(new_block_1_index);
+  auto new_block_2 = manager_.GetBlock(new_block_2_index);
 
   // update link
-  uint32_t block_prev = block.prev_;
-  uint32_t block_next = block.next_;
-  new_block_1.SetPrev(block_prev);
-  new_block_2.SetPrev(new_block_1_index);
+  uint32_t block_prev = block.Get().GetPrev();
+  uint32_t block_next = block.Get().GetNext();
+  new_block_1.Get().SetPrev(block_prev);
+  new_block_2.Get().SetPrev(new_block_1_index);
   if (block_next != 0) {
     UpdateBlockPrevIndex(block_next, new_block_2_index);
   }
-  new_block_1.SetNext(new_block_2_index);
-  new_block_2.SetNext(block_next);
+  new_block_1.Get().SetNext(new_block_2_index);
+  new_block_2.Get().SetNext(block_next);
   if (block_prev != 0) {
     UpdateBlockNextIndex(block_prev, new_block_1_index);
   }
+  block.UnBind();
   // 删除过时节点
   manager_.DeallocBlock(block_index, false);
   // 将key和value插入到新的节点中
-  if (key <= new_block_1.GetMaxKey()) {
-    bool succ = new_block_1.InsertKv(key, value);
+  if (key <= new_block_1.Get().GetMaxKey()) {
+    bool succ = new_block_1.Get().InsertKv(key, value);
     assert(succ == true);
   } else {
-    bool succ = new_block_2.InsertKv(key, value);
+    bool succ = new_block_2.Get().InsertKv(key, value);
     assert(succ == true);
   }
-  std::string block_1_max_key = new_block_1.GetMaxKey();
-  std::string block_2_max_key = new_block_2.GetMaxKey();
+  std::string block_1_max_key = new_block_1.Get().GetMaxKey();
+  std::string block_2_max_key = new_block_2.Get().GetMaxKey();
   // 更新本节点的索引
   UpdateByIndex(child_index, block_1_max_key,
                 ConstructIndexByNum(new_block_1_index));
@@ -277,12 +278,13 @@ InsertInfo Block::DoSplit(uint32_t child_index, const std::string& key,
 DeleteInfo Block::DoMerge(uint32_t child_index) {
   assert(GetHeight() > 0);
   uint32_t child_block_index = GetChildIndex(child_index);
-  Block& child = manager_.GetBlock(child_block_index);
+  auto child = manager_.GetBlock(child_block_index);
   // 特殊情况，只有这个节点并且这个节点已经空了，则直接删除并返回继续merge
-  if (child.kv_view_.size() == 0 && kv_view_.size() == 1) {
+  if (child.Get().GetKVView().size() == 0 && kv_view_.size() == 1) {
     assert(head_entry_ == kv_view_[0].index);
     RemoveEntry(kv_view_[0].index, 0);
     kv_view_.clear();
+    child.UnBind();
     manager_.DeallocBlock(child_block_index);
     return DeleteInfo::Merge();
   }
@@ -301,14 +303,14 @@ DeleteInfo Block::DoMerge(uint32_t child_index) {
   }
   uint32_t left_block_index = GetChildIndex(left_child_index);
   uint32_t right_block_index = GetChildIndex(right_child_index);
-  Block& left_child = manager_.GetBlock(left_block_index);
-  Block& right_child = manager_.GetBlock(right_block_index);
-  if (CheckCanMerge(&left_child, &right_child)) {
-    uint32_t new_block_index = manager_.BlockMerge(&left_child, &right_child);
-    Block& new_block = manager_.GetBlock(new_block_index);
+  auto left_child = manager_.GetBlock(left_block_index);
+  auto right_child = manager_.GetBlock(right_block_index);
+  if (CheckCanMerge(&left_child.Get(), &right_child.Get())) {
+    uint32_t new_block_index = manager_.BlockMerge(&left_child.Get(), &right_child.Get());
+    auto new_block = manager_.GetBlock(new_block_index);
     // update link
-    uint32_t prev_index = left_child.prev_;
-    uint32_t next_index = right_child.next_;
+    uint32_t prev_index = left_child.Get().GetPrev();
+    uint32_t next_index = right_child.Get().GetNext();
     if (prev_index != 0) {
       UpdateBlockNextIndex(prev_index, new_block_index);
     }
@@ -316,20 +318,22 @@ DeleteInfo Block::DoMerge(uint32_t child_index) {
       UpdateBlockPrevIndex(next_index, new_block_index);
     }
     // 删除过时节点
-    UpdateByIndex(left_child_index, new_block.GetMaxKey(),
+    UpdateByIndex(left_child_index, new_block.Get().GetMaxKey(),
                   ConstructIndexByNum(new_block_index));
     DeleteKvByIndex(right_child_index);
+    left_child.UnBind();
+    right_child.UnBind();
     manager_.DeallocBlock(left_block_index);
     manager_.DeallocBlock(right_block_index);
   } else {
     // 不能合并，两个节点中的一个必然含有较多的项，rebalance一下即可。
-    if (left_child.CheckIfNeedToMerge()) {
-      right_child.MoveFirstElementTo(&left_child);
+    if (left_child.Get().CheckIfNeedToMerge()) {
+      right_child.Get().MoveFirstElementTo(&left_child.Get());
     } else {
-      left_child.MoveLastElementTo(&right_child);
+      left_child.Get().MoveLastElementTo(&right_child.Get());
     }
     auto key_view = UpdateEntryKey(kv_view_[left_child_index].index,
-                                   left_child.GetMaxKey());
+                                   left_child.Get().GetMaxKey());
     kv_view_[left_child_index].key_view = key_view;
   }
 

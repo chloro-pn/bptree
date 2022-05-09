@@ -71,23 +71,23 @@ class BlockManager {
 
   ~BlockManager() { FlushToFile(); }
 
-  Block& GetBlock(uint32_t index) { return block_cache_.Get(index); }
+  typename LRUCache<uint32_t, Block>::Wrapper GetBlock(uint32_t index) { return block_cache_.Get(index); }
 
   std::pair<uint32_t, uint32_t> BlockSplit(const Block* block) {
     uint32_t new_block_1_index = AllocNewBlock(block->GetHeight());
     uint32_t new_block_2_index = AllocNewBlock(block->GetHeight());
-    Block& new_block_1 = block_cache_.Get(new_block_1_index);
-    Block& new_block_2 = block_cache_.Get(new_block_2_index);
+    auto new_block_1 = block_cache_.Get(new_block_1_index);
+    auto new_block_2 = block_cache_.Get(new_block_2_index);
     size_t half_count = block->GetKVView().size() / 2;
     for (size_t i = 0; i < half_count; ++i) {
-      bool succ = new_block_1.InsertKv(block->GetViewByIndex(i).key_view,
+      bool succ = new_block_1.Get().InsertKv(block->GetViewByIndex(i).key_view,
                                        block->GetViewByIndex(i).value_view);
       if (succ == false) {
         throw BptreeExecption("block broken");
       }
     }
     for (int i = half_count; i < block->GetKVView().size(); ++i) {
-      bool succ = new_block_2.InsertKv(block->GetViewByIndex(i).key_view,
+      bool succ = new_block_2.Get().InsertKv(block->GetViewByIndex(i).key_view,
                                        block->GetViewByIndex(i).value_view);
       if (succ == false) {
         throw BptreeExecption("block broken");
@@ -98,16 +98,16 @@ class BlockManager {
 
   uint32_t BlockMerge(const Block* b1, const Block* b2) {
     uint32_t new_block_index = AllocNewBlock(b1->GetHeight());
-    Block& new_block = block_cache_.Get(new_block_index);
+    auto new_block = block_cache_.Get(new_block_index);
     for (size_t i = 0; i < b1->GetKVView().size(); ++i) {
-      bool succ = new_block.InsertKv(b1->GetViewByIndex(i).key_view,
+      bool succ = new_block.Get().InsertKv(b1->GetViewByIndex(i).key_view,
                                      b1->GetViewByIndex(i).value_view);
       if (succ == false) {
         throw BptreeExecption("block broken");
       }
     }
     for (size_t i = 0; i < b2->GetKVView().size(); ++i) {
-      bool succ = new_block.InsertKv(b2->GetViewByIndex(i).key_view,
+      bool succ = new_block.Get().InsertKv(b2->GetViewByIndex(i).key_view,
                                      b2->GetViewByIndex(i).value_view);
       if (succ == false) {
         throw BptreeExecption("block broken");
@@ -120,7 +120,9 @@ class BlockManager {
     if (key.size() != super_block_.key_size_) {
       throw BptreeExecption("wrong key length");
     }
-    return block_cache_.Get(super_block_.root_index_).Get(key);
+    auto block = block_cache_.Get(super_block_.root_index_);
+    std::string result = block.Get().Get(key);
+    return result;
   }
 
   // 范围查找
@@ -131,7 +133,7 @@ class BlockManager {
       throw BptreeExecption("wrong key length");
     }
     auto location =
-        block_cache_.Get(super_block_.root_index_).GetBlockIndexContainKey(key);
+        block_cache_.Get(super_block_.root_index_).Get().GetBlockIndexContainKey(key);
     if (location.first == 0) {
       return {};
     }
@@ -139,9 +141,9 @@ class BlockManager {
     uint32_t block_index = location.first;
     uint32_t view_index = location.second;
     while (block_index != 0) {
-      Block& block = block_cache_.Get(block_index);
-      for (size_t i = view_index; i < block.GetKVView().size(); ++i) {
-        const Entry& entry = block.GetViewByIndex(i);
+      auto block = block_cache_.Get(block_index);
+      for (size_t i = view_index; i < block.Get().GetKVView().size(); ++i) {
+        const Entry& entry = block.Get().GetViewByIndex(i);
         GetRangeOption state = functor(entry);
         if (state == GetRangeOption::SKIP) {
           continue;
@@ -153,7 +155,7 @@ class BlockManager {
         }
       }
       // 下一个block
-      block_index = block.GetNext();
+      block_index = block.Get().GetNext();
       view_index = 0;
     }
     return result;
@@ -165,31 +167,31 @@ class BlockManager {
       throw BptreeExecption("wrong kv length");
     }
     InsertInfo info =
-        block_cache_.Get(super_block_.root_index_).Insert(key, value);
+        block_cache_.Get(super_block_.root_index_).Get().Insert(key, value);
     if (info.state_ == InsertInfo::State::Split) {
       // 根节点的分裂
       uint32_t old_root_index = super_block_.root_index_;
-      Block& old_root = block_cache_.Get(super_block_.root_index_);
-      uint32_t old_root_height = old_root.GetHeight();
-      auto new_blocks = BlockSplit(&old_root);
+      auto old_root = block_cache_.Get(super_block_.root_index_);
+      uint32_t old_root_height = old_root.Get().GetHeight();
+      auto new_blocks = BlockSplit(&old_root.Get());
 
-      Block& left_block = block_cache_.Get(new_blocks.first);
-      Block& right_block = block_cache_.Get(new_blocks.second);
+      auto left_block = block_cache_.Get(new_blocks.first);
+      auto right_block = block_cache_.Get(new_blocks.second);
       // update link
-      left_block.SetNext(new_blocks.second);
-      right_block.SetPrev(new_blocks.first);
+      left_block.Get().SetNext(new_blocks.second);
+      right_block.Get().SetPrev(new_blocks.first);
       // insert
-      if (info.key_ <= left_block.GetMaxKey()) {
-        left_block.InsertKv(info.key_, info.value_);
+      if (info.key_ <= left_block.Get().GetMaxKey()) {
+        left_block.Get().InsertKv(info.key_, info.value_);
       } else {
-        right_block.InsertKv(info.key_, info.value_);
+        right_block.Get().InsertKv(info.key_, info.value_);
       }
       // update root
-      old_root.Clear();
-      old_root.SetHeight(old_root_height + 1);
-      old_root.InsertKv(left_block.GetMaxKey(),
+      old_root.Get().Clear();
+      old_root.Get().SetHeight(old_root_height + 1);
+      old_root.Get().InsertKv(left_block.Get().GetMaxKey(),
                         ConstructIndexByNum(new_blocks.first));
-      old_root.InsertKv(right_block.GetMaxKey(),
+      old_root.Get().InsertKv(right_block.Get().GetMaxKey(),
                         ConstructIndexByNum(new_blocks.second));
     }
     return;
@@ -200,7 +202,7 @@ class BlockManager {
       throw BptreeExecption("wrong key length");
     }
     // 根节点的merge信息不处理
-    block_cache_.Get(super_block_.root_index_).Delete(key);
+    block_cache_.Get(super_block_.root_index_).Get().Delete(key);
   }
 
   // 申请一个新的Block
@@ -210,10 +212,13 @@ class BlockManager {
       ++super_block_.current_max_block_index_;
       result = super_block_.current_max_block_index_;
     } else {
-      Block& block = block_cache_.Get(super_block_.free_block_head_);
-      super_block_.free_block_head_ = block.GetNextFreeIndex();
-      result = block.GetIndex();
-      block_cache_.Delete(result, false);
+      {
+        auto block = block_cache_.Get(super_block_.free_block_head_);
+        super_block_.free_block_head_ = block.Get().GetNextFreeIndex();
+        result = block.Get().GetIndex();
+      }
+      bool succ = block_cache_.Delete(result, false);
+      assert(succ == true);
     }
     auto new_block = std::unique_ptr<Block>(
         new Block(*this, result, height, super_block_.key_size_,
@@ -223,24 +228,27 @@ class BlockManager {
   }
 
   void DeallocBlock(uint32_t index, bool update_link_relation = true) {
-    Block& block = block_cache_.Get(index);
-    if (update_link_relation == true) {
-      uint32_t next = block.GetNext();
-      uint32_t prev = block.GetPrev();
-      if (next != 0) {
-        Block& next_block = block_cache_.Get(next);
-        next_block.SetPrev(prev);
+    {
+      auto block = block_cache_.Get(index);
+      if (update_link_relation == true) {
+        uint32_t next = block.Get().GetNext();
+        uint32_t prev = block.Get().GetPrev();
+        if (next != 0) {
+          auto next_block = block_cache_.Get(next);
+          next_block.Get().SetPrev(prev);
+        }
+        if (prev != 0) {
+          auto prev_block = block_cache_.Get(prev);
+          prev_block.Get().SetNext(next);
+        }
       }
-      if (prev != 0) {
-        Block& prev_block = block_cache_.Get(prev);
-        prev_block.SetNext(next);
-      }
+      block.Get().Clear();
+      block.Get().SetNextFreeIndex(super_block_.free_block_head_);
+      super_block_.free_block_head_ = index;
     }
-    block.Clear();
-    block.SetNextFreeIndex(super_block_.free_block_head_);
-    super_block_.free_block_head_ = index;
     // cache中也要删除
-    block_cache_.Delete(index, true);
+    bool succ = block_cache_.Delete(index, true);
+    assert(succ == true);
   }
 
   void ReadBlockFromFile(BlockBase* block, uint32_t index) {
@@ -260,7 +268,8 @@ class BlockManager {
       return;
     }
     FlushSuperBlockToFile(f_);
-    block_cache_.Clear();
+    bool succ = block_cache_.Clear();
+    assert(succ == true);
     fclose(f_);
     f_ = nullptr;
   }
