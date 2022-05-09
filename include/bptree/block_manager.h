@@ -24,12 +24,19 @@ enum class GetRangeOption {
   STOP,
 };
 
+struct BlockManagerOption {
+  std::string file_name;
+  bool create;
+  uint32_t key_size;
+  uint32_t value_size;
+};
+
 class BlockManager {
  public:
-  explicit BlockManager(const std::string& file_name, uint32_t key_size = 0, uint32_t value_size = 0)
+  explicit BlockManager(BlockManagerOption option)
       : block_cache_(1024, [this](const uint32_t key) -> std::unique_ptr<Block> { return this->LoadBlock(key); }),
-        file_name_(file_name),
-        super_block_(key_size, value_size) {
+        file_name_(option.file_name),
+        super_block_(option.key_size, option.value_size) {
     block_cache_.SetFreeNotify([this](const uint32_t& key, Block& value) -> void {
       bool dirty = value.Flush();
       if (dirty == true) {
@@ -37,8 +44,11 @@ class BlockManager {
       }
     });
     // 从文件中读取super_block_，填充root_index_。
-    if (util::FileNotExist(file_name)) {
-      if (key_size == 0 || value_size == 0) {
+    if (util::FileNotExist(file_name_)) {
+      if (option.create == false) {
+        throw BptreeExecption("file ", file_name_, " not exist");
+      }
+      if (option.key_size == 0 || option.value_size == 0) {
         throw BptreeExecption(
             "block manager construct error, key_size and value_size should not "
             "be 0");
@@ -49,16 +59,19 @@ class BlockManager {
       super_block_.free_block_head_ = 0;
       super_block_.current_max_block_index_ = 1;
       // root block
-      auto root_block = std::unique_ptr<Block>(new Block(*this, super_block_.root_index_, 1, key_size, value_size));
+      auto root_block = std::unique_ptr<Block>(new Block(*this, super_block_.root_index_, 1, option.key_size, option.value_size));
       block_cache_.Get(super_block_.root_index_, std::move(root_block));
       f_ = fopen(file_name_.c_str(), "wb+");
       if (f_ == nullptr) {
-        throw BptreeExecption("file " + file_name + " open fail");
+        throw BptreeExecption("file " + file_name_ + " open fail");
       }
     } else {
-      f_ = fopen(file_name.c_str(), "rb+");
+      if (option.create == true) {
+        throw BptreeExecption("file ", file_name_, " already exists");
+      }
+      f_ = fopen(file_name_.c_str(), "rb+");
       if (f_ == nullptr) {
-        throw BptreeExecption("file " + file_name + " open fail");
+        throw BptreeExecption("file " + file_name_ + " open fail");
       }
       ParseSuperBlockFromFile();
     }
@@ -282,6 +295,26 @@ class BlockManager {
     ReadBlockFromFile(&super_block_, 0);
     super_block_.Parse();
     GetBlock(super_block_.root_index_);
+  }
+
+  void PrintRootBlock() {
+    auto root_block = block_cache_.Get(super_block_.root_index_);
+    root_block.Get().Print();
+  }
+
+  void PrintBlockByIndex(uint32_t index) {
+    if (index == 0) {
+      throw BptreeExecption("should not print super block");
+    }
+    if (super_block_.current_max_block_index_ < index) {
+      throw BptreeExecption("request block's index invalid : ", std::to_string(index));
+    }
+    auto block = block_cache_.Get(index);
+    block.Get().Print();
+  }
+
+  void PrintCacheInfo() {
+    block_cache_.PrintInfo();
   }
 
  private:

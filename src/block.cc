@@ -145,10 +145,6 @@ DeleteInfo Block::Delete(const std::string& key) {
 }
 
 bool Block::InsertKv(const std::string_view& key, const std::string_view& value) noexcept {
-  // just for test
-  if (kv_view_.size() >= 10) {
-    return false;
-  }
   uint32_t prev_index = std::numeric_limits<uint32_t>::max();
   for (size_t i = 0; i < kv_view_.size(); ++i) {
     if (kv_view_[i].key_view == key) {
@@ -188,14 +184,24 @@ void Block::UpdateBlockNextIndex(uint32_t block_index, uint32_t next) {
 }
 
 void Block::Print() {
-  std::cout << "block height " << GetHeight() << std::endl;
+  std::cout << "index : " << GetIndex() << std::endl;
+  std::cout << "height : " << GetHeight() << std::endl;
   if (next_free_index_ != not_free_flag) {
     std::cout << "free block " << std::endl;
     return;
   }
-  std::cout << "prev and next " << prev_ << " " << next_ << std::endl;
+  std::cout << "prev and next " << GetPrev() << " " << GetNext() << std::endl;
   for (size_t i = 0; i < kv_view_.size(); ++i) {
-    std::cout << i << " th kv : " << kv_view_[i].key_view << " " << kv_view_[i].value_view << std::endl;
+    std::cout << i << " th kv : " << kv_view_[i].key_view << " ";
+    if (GetHeight() == 0) {
+      std::cout << kv_view_[i].value_view << " ";
+    } else {
+      uint32_t index = 0;
+      memcpy(&index, kv_view_[i].value_view.data(), kv_view_[i].value_view.length());
+      std::cout << std::to_string(index) << " ";
+    }
+      
+    std::cout << " next entry index : " << kv_view_[i].index << std::endl;
   }
 }
 

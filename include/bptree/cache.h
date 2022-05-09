@@ -4,6 +4,7 @@
 #include <list>
 #include <memory>
 #include <unordered_map>
+#include <iostream>
 
 #include "bptree/log.h"
 #include "exception.h"
@@ -134,6 +135,13 @@ class LRUCache {
       cache_.erase(remove_key);
       lru_list_.pop_back();
     }
+  }
+
+  void PrintInfo() const {
+    std::cout << "this is lru cache's info : " << std::endl;
+    std::cout << "list in_use_'s size is " << in_use_.size() << std::endl;
+    std::cout << "list lru_list's size is " << lru_list_.size() << std::endl;
+    std::cout << "cache's size is " << cache_.size() << std::endl;
   }
 
   // 清空没有被使用的元素，如果还有在被使用的元素，返回false，否则返回true。

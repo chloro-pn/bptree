@@ -3,7 +3,12 @@
 #include "gtest/gtest.h"
 
 TEST(block_manager, all) {
-  bptree::BlockManager manager("test6.db", 1, 5);
+  bptree::BlockManagerOption option;
+  option.file_name = "test.db";
+  option.create = true;
+  option.key_size = 1;
+  option.value_size = 5;
+  bptree::BlockManager manager(option);
 
   std::string value = manager.Get("a");
   EXPECT_EQ(value, std::string(""));
@@ -15,7 +20,12 @@ TEST(block_manager, all) {
 }
 
 TEST(block_manager, getrange) {
-  bptree::BlockManager manager("test2.db", 1, 5);
+  bptree::BlockManagerOption option;
+  option.file_name = "test2.db";
+  option.create = true;
+  option.key_size = 1;
+  option.value_size = 5;
+  bptree::BlockManager manager(option);
   for (int i = 0; i < 20; ++i) {
     std::string key;
     key.push_back('a' + i);

@@ -45,7 +45,12 @@ TEST(block, helper) {
 }
 
 TEST(block, constructor) {
-  bptree::BlockManager manager("test3.db", 1, 5);
+  bptree::BlockManagerOption option;
+  option.file_name = "test3.db";
+  option.create = true;
+  option.key_size = 1;
+  option.value_size = 5;
+  bptree::BlockManager manager(option);
   bptree::Block block(manager, 2, 0, 1, 5);
   EXPECT_EQ(block.GetHeight(), 0);
 

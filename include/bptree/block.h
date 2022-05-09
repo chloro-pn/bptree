@@ -153,22 +153,17 @@ class BlockBase {
   }
 
   bool Flush() noexcept {
-    std::cout << 1 << std::endl;
     if (dirty_ == false) {
       return false;
     }
-    std::cout << 2 << std::endl;
     uint32_t offset = 0;
     offset = AppendToBuf(buf_, crc_, offset);
     offset = AppendToBuf(buf_, index_, offset);
     offset = AppendToBuf(buf_, height_, offset);
-    std::cout << 3 << std::endl;
     FlushToBuf(offset);
     // calculate crc and update.
     crc_ = crc32((const char*)&buf_[sizeof(crc_)], block_size - sizeof(crc_));
-    std::cout << 4 << std::endl;
     AppendToBuf(buf_, crc_, 0);
-    std::cout << 5 << std::endl;
     dirty_ = false;
     return true;
   }
@@ -211,7 +206,11 @@ class BlockBase {
 
   void SetDirty() { dirty_ = true; }
 
-  virtual ~BlockBase() { assert(dirty_ == false); }
+  virtual ~BlockBase() {
+    if (dirty_ == true) {
+      std::cerr << "warn : block " << index_ << " destruct in dirty state, maybe throw exception or some inner error!" << std::endl;
+    }
+  }
 
  protected:
   uint8_t buf_[block_size];
@@ -532,14 +531,16 @@ class Block : public BlockBase {
    * 以下函数涉及block的分裂和合并相关操作
    */
 
+  uint32_t GetMaxEntrySize() const {
+    return (block_size - GetMetaSpace()) / GetEntrySize();
+  }
+
   bool CheckIfNeedToMerge() noexcept {
-    return kv_view_.size() < 5;
-    // return used_bytes_ * 2 < block_size;
+    return kv_view_.size() * 2 < GetMaxEntrySize();
   }
 
   bool CheckCanMerge(Block* b1, Block* b2) noexcept {
-    return b1->kv_view_.size() + b2->kv_view_.size() <= 10;
-    // return b1->used_bytes_ + b2->used_bytes_ <= block_size;
+    return b1->kv_view_.size() + b2->kv_view_.size() <= GetMaxEntrySize();
   }
 
   void UpdateBlockPrevIndex(uint32_t block_index, uint32_t prev) noexcept;

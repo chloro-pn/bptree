@@ -13,8 +13,14 @@ cc_library(
 
 # https://docs.bazel.build/versions/master/be/c-cpp.html#cc_binary
 cc_binary(
-  name = "get_range",
-  srcs = ["example/get_range.cc"],
+  name = "example",
+  srcs = ["example/example.cc"],
+  deps = [":bptree"],
+)
+
+cc_binary(
+  name = "block_print",
+  srcs = ["tool/block_print.cc"],
   deps = [":bptree"],
 )
 
