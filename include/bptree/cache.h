@@ -24,7 +24,8 @@ class LRUCache {
 
   class Wrapper {
    public:
-    Wrapper(LRUCache<Key, Value>& cache, const Key& key, Entry& v) : holder_(cache), key_(key), value_(v), unbinded_(false) {
+    Wrapper(LRUCache<Key, Value>& cache, const Key& key, Entry& v)
+        : holder_(cache), key_(key), value_(v), unbinded_(false) {
       assert(value_.use_ref_ > 0);
     }
     // move-only type
@@ -34,17 +35,11 @@ class LRUCache {
     Wrapper(Wrapper&&) = default;
     Wrapper& operator=(Wrapper&&) = default;
 
-    Value& Get() {
-      return *value_.value.get();
-    }
+    Value& Get() { return *value_.value.get(); }
 
-    const Value& Get() const {
-      return *value_.value.get();
-    }
+    const Value& Get() const { return *value_.value.get(); }
 
-    ~Wrapper() {
-      UnBind();
-    }
+    ~Wrapper() { UnBind(); }
 
     void UnBind() {
       if (unbinded_ == true) {
@@ -62,13 +57,13 @@ class LRUCache {
    private:
     LRUCache<Key, Value>& holder_;
     Key key_;
-    // 持有无序map元素的引用是安全的，只有对应的元素被删除才会导致失效， from https://en.cppreference.com/w/cpp/container/unordered_map
+    // 持有无序map元素的引用是安全的，只有对应的元素被删除才会导致失效， from
+    // https://en.cppreference.com/w/cpp/container/unordered_map
     Entry& value_;
     bool unbinded_;
   };
-  
-  using load_functor_type =
-      std::function<std::unique_ptr<Value>(const Key& key)>;
+
+  using load_functor_type = std::function<std::unique_ptr<Value>(const Key& key)>;
   using free_functor = std::function<void(const Key& key, Value& value)>;
 
   explicit LRUCache(uint32_t capacity, const load_functor_type& if_not_exist)

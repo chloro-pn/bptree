@@ -25,19 +25,15 @@ enum class GetRangeOption {
 };
 
 class BlockManager {
- public:  
-  explicit BlockManager(const std::string& file_name, uint32_t key_size = 0,
-                        uint32_t value_size = 0)
-      : block_cache_(1024,
-                     [this](const uint32_t key) -> std::unique_ptr<Block> {
-                       return this->LoadBlock(key);
-                     }),
+ public:
+  explicit BlockManager(const std::string& file_name, uint32_t key_size = 0, uint32_t value_size = 0)
+      : block_cache_(1024, [this](const uint32_t key) -> std::unique_ptr<Block> { return this->LoadBlock(key); }),
         file_name_(file_name),
         super_block_(key_size, value_size) {
     block_cache_.SetFreeNotify([this](const uint32_t& key, Block& value) -> void {
       bool dirty = value.Flush();
       if (dirty == true) {
-          this->FlushBlockToFile(this->f_, value.GetIndex(), &value);
+        this->FlushBlockToFile(this->f_, value.GetIndex(), &value);
       }
     });
     // 从文件中读取super_block_，填充root_index_。
@@ -53,8 +49,7 @@ class BlockManager {
       super_block_.free_block_head_ = 0;
       super_block_.current_max_block_index_ = 1;
       // root block
-      auto root_block = std::unique_ptr<Block>(
-          new Block(*this, super_block_.root_index_, 1, key_size, value_size));
+      auto root_block = std::unique_ptr<Block>(new Block(*this, super_block_.root_index_, 1, key_size, value_size));
       block_cache_.Get(super_block_.root_index_, std::move(root_block));
       f_ = fopen(file_name_.c_str(), "wb+");
       if (f_ == nullptr) {
@@ -80,15 +75,13 @@ class BlockManager {
     auto new_block_2 = block_cache_.Get(new_block_2_index);
     size_t half_count = block->GetKVView().size() / 2;
     for (size_t i = 0; i < half_count; ++i) {
-      bool succ = new_block_1.Get().InsertKv(block->GetViewByIndex(i).key_view,
-                                       block->GetViewByIndex(i).value_view);
+      bool succ = new_block_1.Get().InsertKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view);
       if (succ == false) {
         throw BptreeExecption("block broken");
       }
     }
     for (int i = half_count; i < block->GetKVView().size(); ++i) {
-      bool succ = new_block_2.Get().InsertKv(block->GetViewByIndex(i).key_view,
-                                       block->GetViewByIndex(i).value_view);
+      bool succ = new_block_2.Get().InsertKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view);
       if (succ == false) {
         throw BptreeExecption("block broken");
       }
@@ -100,15 +93,13 @@ class BlockManager {
     uint32_t new_block_index = AllocNewBlock(b1->GetHeight());
     auto new_block = block_cache_.Get(new_block_index);
     for (size_t i = 0; i < b1->GetKVView().size(); ++i) {
-      bool succ = new_block.Get().InsertKv(b1->GetViewByIndex(i).key_view,
-                                     b1->GetViewByIndex(i).value_view);
+      bool succ = new_block.Get().InsertKv(b1->GetViewByIndex(i).key_view, b1->GetViewByIndex(i).value_view);
       if (succ == false) {
         throw BptreeExecption("block broken");
       }
     }
     for (size_t i = 0; i < b2->GetKVView().size(); ++i) {
-      bool succ = new_block.Get().InsertKv(b2->GetViewByIndex(i).key_view,
-                                     b2->GetViewByIndex(i).value_view);
+      bool succ = new_block.Get().InsertKv(b2->GetViewByIndex(i).key_view, b2->GetViewByIndex(i).value_view);
       if (succ == false) {
         throw BptreeExecption("block broken");
       }
@@ -126,14 +117,12 @@ class BlockManager {
   }
 
   // 范围查找
-  std::vector<std::pair<std::string, std::string>> GetRange(
-      const std::string& key,
-      std::function<GetRangeOption(const Entry& entry)> functor) {
+  std::vector<std::pair<std::string, std::string>> GetRange(const std::string& key,
+                                                            std::function<GetRangeOption(const Entry& entry)> functor) {
     if (key.size() != super_block_.key_size_) {
       throw BptreeExecption("wrong key length");
     }
-    auto location =
-        block_cache_.Get(super_block_.root_index_).Get().GetBlockIndexContainKey(key);
+    auto location = block_cache_.Get(super_block_.root_index_).Get().GetBlockIndexContainKey(key);
     if (location.first == 0) {
       return {};
     }
@@ -148,8 +137,7 @@ class BlockManager {
         if (state == GetRangeOption::SKIP) {
           continue;
         } else if (state == GetRangeOption::SELECT) {
-          result.push_back(
-              {std::string(entry.key_view), std::string(entry.value_view)});
+          result.push_back({std::string(entry.key_view), std::string(entry.value_view)});
         } else {
           return result;
         }
@@ -162,12 +150,10 @@ class BlockManager {
   }
 
   void Insert(const std::string& key, const std::string& value) {
-    if (key.size() != super_block_.key_size_ ||
-        value.size() != super_block_.value_size_) {
+    if (key.size() != super_block_.key_size_ || value.size() != super_block_.value_size_) {
       throw BptreeExecption("wrong kv length");
     }
-    InsertInfo info =
-        block_cache_.Get(super_block_.root_index_).Get().Insert(key, value);
+    InsertInfo info = block_cache_.Get(super_block_.root_index_).Get().Insert(key, value);
     if (info.state_ == InsertInfo::State::Split) {
       // 根节点的分裂
       uint32_t old_root_index = super_block_.root_index_;
@@ -189,10 +175,8 @@ class BlockManager {
       // update root
       old_root.Get().Clear();
       old_root.Get().SetHeight(old_root_height + 1);
-      old_root.Get().InsertKv(left_block.Get().GetMaxKey(),
-                        ConstructIndexByNum(new_blocks.first));
-      old_root.Get().InsertKv(right_block.Get().GetMaxKey(),
-                        ConstructIndexByNum(new_blocks.second));
+      old_root.Get().InsertKv(left_block.Get().GetMaxKey(), ConstructIndexByNum(new_blocks.first));
+      old_root.Get().InsertKv(right_block.Get().GetMaxKey(), ConstructIndexByNum(new_blocks.second));
     }
     return;
   }
@@ -220,9 +204,8 @@ class BlockManager {
       bool succ = block_cache_.Delete(result, false);
       assert(succ == true);
     }
-    auto new_block = std::unique_ptr<Block>(
-        new Block(*this, result, height, super_block_.key_size_,
-                  super_block_.value_size_));
+    auto new_block =
+        std::unique_ptr<Block>(new Block(*this, result, height, super_block_.key_size_, super_block_.value_size_));
     block_cache_.Get(result, std::move(new_block));
     return result;
   }

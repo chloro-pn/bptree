@@ -13,8 +13,7 @@
 
 namespace bptree {
 
-std::pair<uint32_t, uint32_t> Block::GetBlockIndexContainKey(
-    const std::string& key) {
+std::pair<uint32_t, uint32_t> Block::GetBlockIndexContainKey(const std::string& key) {
   assert(GetHeight() != super_height);
   if (GetHeight() > 0) {
     for (size_t i = 0; i < kv_view_.size(); ++i) {
@@ -87,9 +86,7 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value) {
     }
     return DoSplit(child_index, info.key_, info.value_);
   } else {
-    auto it =
-        std::find_if(kv_view_.begin(), kv_view_.end(),
-                     [&](const Entry& n) -> bool { return n.key_view == key; });
+    auto it = std::find_if(kv_view_.begin(), kv_view_.end(), [&](const Entry& n) -> bool { return n.key_view == key; });
     if (it != kv_view_.end()) {
       UpdateEntryValue(it->index, value);
       return InsertInfo::Ok();
@@ -147,8 +144,7 @@ DeleteInfo Block::Delete(const std::string& key) {
   return obj;
 }
 
-bool Block::InsertKv(const std::string_view& key,
-                     const std::string_view& value) noexcept {
+bool Block::InsertKv(const std::string_view& key, const std::string_view& value) noexcept {
   // just for test
   if (kv_view_.size() >= 10) {
     return false;
@@ -169,8 +165,7 @@ bool Block::InsertKv(const std::string_view& key,
   if (prev_index == std::numeric_limits<uint32_t>::max()) {
     entry = InsertEntry(0, std::string(key), std::string(value), full);
   } else {
-    entry = InsertEntry(kv_view_[prev_index].index, std::string(key),
-                        std::string(value), full);
+    entry = InsertEntry(kv_view_[prev_index].index, std::string(key), std::string(value), full);
   }
   if (full == true) {
     return false;
@@ -178,9 +173,7 @@ bool Block::InsertKv(const std::string_view& key,
   // todo 优化
   kv_view_.push_back(entry);
   std::sort(kv_view_.begin(), kv_view_.end(),
-            [](const Entry& n1, const Entry& n2) -> bool {
-              return n1.key_view < n2.key_view;
-            });
+            [](const Entry& n1, const Entry& n2) -> bool { return n1.key_view < n2.key_view; });
   return true;
 }
 
@@ -202,8 +195,7 @@ void Block::Print() {
   }
   std::cout << "prev and next " << prev_ << " " << next_ << std::endl;
   for (size_t i = 0; i < kv_view_.size(); ++i) {
-    std::cout << i << " th kv : " << kv_view_[i].key_view << " "
-              << kv_view_[i].value_view << std::endl;
+    std::cout << i << " th kv : " << kv_view_[i].key_view << " " << kv_view_[i].value_view << std::endl;
   }
 }
 
@@ -224,8 +216,7 @@ void Block::MoveLastElementTo(Block* other) {
   kv_view_.pop_back();
 }
 
-InsertInfo Block::DoSplit(uint32_t child_index, const std::string& key,
-                          const std::string& value) {
+InsertInfo Block::DoSplit(uint32_t child_index, const std::string& key, const std::string& value) {
   // 只有非叶子节点才会调用这里
   assert(GetHeight() > 0);
   uint32_t block_index = GetChildIndex(child_index);
@@ -265,12 +256,10 @@ InsertInfo Block::DoSplit(uint32_t child_index, const std::string& key,
   std::string block_1_max_key = new_block_1.Get().GetMaxKey();
   std::string block_2_max_key = new_block_2.Get().GetMaxKey();
   // 更新本节点的索引
-  UpdateByIndex(child_index, block_1_max_key,
-                ConstructIndexByNum(new_block_1_index));
+  UpdateByIndex(child_index, block_1_max_key, ConstructIndexByNum(new_block_1_index));
   bool succ = InsertKv(block_2_max_key, ConstructIndexByNum(new_block_2_index));
   if (succ == false) {
-    return InsertInfo::Split(block_2_max_key,
-                             ConstructIndexByNum(new_block_2_index));
+    return InsertInfo::Split(block_2_max_key, ConstructIndexByNum(new_block_2_index));
   }
   return InsertInfo::Ok();
 }
@@ -318,8 +307,7 @@ DeleteInfo Block::DoMerge(uint32_t child_index) {
       UpdateBlockPrevIndex(next_index, new_block_index);
     }
     // 删除过时节点
-    UpdateByIndex(left_child_index, new_block.Get().GetMaxKey(),
-                  ConstructIndexByNum(new_block_index));
+    UpdateByIndex(left_child_index, new_block.Get().GetMaxKey(), ConstructIndexByNum(new_block_index));
     DeleteKvByIndex(right_child_index);
     left_child.UnBind();
     right_child.UnBind();
@@ -332,8 +320,7 @@ DeleteInfo Block::DoMerge(uint32_t child_index) {
     } else {
       left_child.Get().MoveLastElementTo(&right_child.Get());
     }
-    auto key_view = UpdateEntryKey(kv_view_[left_child_index].index,
-                                   left_child.Get().GetMaxKey());
+    auto key_view = UpdateEntryKey(kv_view_[left_child_index].index, left_child.Get().GetMaxKey());
     kv_view_[left_child_index].key_view = key_view;
   }
 

@@ -26,13 +26,9 @@ TEST(block, helper) {
 
   std::string key("bptree_test_key");
   offset = bptree::AppendStrToBuf(buf, key, offset);
-  EXPECT_EQ(offset,
-            sizeof(uint32_t) + sizeof(uint8_t) + key.size() + sizeof(uint32_t));
-  EXPECT_EQ(uint32_t(key.size()),
-            *reinterpret_cast<uint32_t*>(
-                &buf[offset - key.size() - sizeof(uint32_t)]));
-  EXPECT_EQ(key,
-            std::string((const char*)&buf[offset - key.size()], key.size()));
+  EXPECT_EQ(offset, sizeof(uint32_t) + sizeof(uint8_t) + key.size() + sizeof(uint32_t));
+  EXPECT_EQ(uint32_t(key.size()), *reinterpret_cast<uint32_t*>(&buf[offset - key.size() - sizeof(uint32_t)]));
+  EXPECT_EQ(key, std::string((const char*)&buf[offset - key.size()], key.size()));
 
   offset = 0;
   uint32_t num = 0;

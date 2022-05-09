@@ -8,18 +8,16 @@
 TEST(cache, all) {
   std::vector<uint32_t> load_vec;
   std::vector<std::pair<uint32_t, uint32_t>> free_vec;
-  bptree::LRUCache<uint32_t, uint32_t> cache(
-      uint32_t(3),
-      [&load_vec](const uint32_t& key) -> std::unique_ptr<uint32_t> {
-        load_vec.push_back(key);
-        return std::unique_ptr<uint32_t>(new uint32_t(key));
-      });
+  bptree::LRUCache<uint32_t, uint32_t> cache(uint32_t(3),
+                                             [&load_vec](const uint32_t& key) -> std::unique_ptr<uint32_t> {
+                                               load_vec.push_back(key);
+                                               return std::unique_ptr<uint32_t>(new uint32_t(key));
+                                             });
 
-  cache.SetFreeNotify(
-      [&free_vec](const uint32_t& key, const uint32_t& value) -> void {
-        free_vec.push_back({key, value});
-        return;
-      });
+  cache.SetFreeNotify([&free_vec](const uint32_t& key, const uint32_t& value) -> void {
+    free_vec.push_back({key, value});
+    return;
+  });
   // 0
   uint32_t v = cache.Get(0).Get();
   EXPECT_EQ(v, 0);
