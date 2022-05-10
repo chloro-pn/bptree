@@ -70,7 +70,8 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value) {
       bool succ = InsertKv(key, ConstructIndexByNum(child_block_index));
       // 只插入一个元素，不应该失败
       assert(succ == true);
-      BPTREE_LOG_DEBUG("insert ({}, {}) to a new block {}", key, value, manager_.GetBlock(child_block_index).Get().GetIndex());
+      BPTREE_LOG_DEBUG("insert ({}, {}) to a new block {}", key, value,
+                       manager_.GetBlock(child_block_index).Get().GetIndex());
       return InsertInfo::Ok();
     }
     int32_t child_index = -1;
@@ -95,7 +96,8 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value) {
     auto it = std::find_if(kv_view_.begin(), kv_view_.end(), [&](const Entry& n) -> bool { return n.key_view == key; });
     if (it != kv_view_.end()) {
       UpdateEntryValue(it->index, value);
-      BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {}, the key already exists, update value", key, value, GetIndex());
+      BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {}, the key already exists, update value", key, value,
+                       GetIndex());
       return InsertInfo::Ok();
     }
     bool succ = InsertKv(key, value);

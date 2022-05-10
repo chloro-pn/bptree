@@ -85,6 +85,8 @@ class BlockManager {
 
   typename LRUCache<uint32_t, Block>::Wrapper GetBlock(uint32_t index) { return block_cache_.Get(index); }
 
+  uint32_t GetRootIndex() const noexcept { return super_block_.root_index_; }
+
   std::pair<uint32_t, uint32_t> BlockSplit(const Block* block) {
     uint32_t new_block_1_index = AllocNewBlock(block->GetHeight());
     uint32_t new_block_2_index = AllocNewBlock(block->GetHeight());
