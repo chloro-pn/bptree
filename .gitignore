@@ -1,2 +1,4 @@
 .vscode/
 bazel-*
+*.log
+*.db

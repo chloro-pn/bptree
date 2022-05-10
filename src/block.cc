@@ -118,6 +118,7 @@ DeleteInfo Block::Delete(const std::string& key) {
         if (info.state_ == DeleteInfo::State::Ok) {
           return info;
         } else {
+          block.UnBind();
           // do merge.
           return DoMerge(i);
         }
@@ -184,25 +185,28 @@ void Block::UpdateBlockNextIndex(uint32_t block_index, uint32_t next) {
 }
 
 void Block::Print() {
-  std::cout << "index : " << GetIndex() << std::endl;
-  std::cout << "height : " << GetHeight() << std::endl;
+  BPTREE_LOG_INFO("-------begin block print-------");
+  BPTREE_LOG_INFO("index : {}", GetIndex());
+  BPTREE_LOG_INFO("height : {}", GetHeight());
   if (next_free_index_ != not_free_flag) {
-    std::cout << "free block " << std::endl;
+    BPTREE_LOG_INFO("free block, next_free_index : {}", next_free_index_);
+    BPTREE_LOG_INFO("--------end block print--------");
     return;
   }
-  std::cout << "prev and next " << GetPrev() << " " << GetNext() << std::endl;
+  BPTREE_LOG_INFO("prev : {}, next : {}", GetPrev(), GetNext());
   for (size_t i = 0; i < kv_view_.size(); ++i) {
-    std::cout << i << " th kv : " << kv_view_[i].key_view << " ";
+    std::string value_str;
     if (GetHeight() == 0) {
-      std::cout << kv_view_[i].value_view << " ";
+      value_str = kv_view_[i].value_view;
     } else {
       uint32_t index = 0;
       memcpy(&index, kv_view_[i].value_view.data(), kv_view_[i].value_view.length());
-      std::cout << std::to_string(index) << " ";
+      value_str = std::to_string(index);
     }
-      
-    std::cout << " next entry index : " << kv_view_[i].index << std::endl;
+    BPTREE_LOG_INFO("{} th kv : (next entry index){} (key){} (value){}", i, kv_view_[i].index, kv_view_[i].key_view,
+                    value_str);
   }
+  BPTREE_LOG_INFO("--------end block print--------");
 }
 
 void Block::MoveFirstElementTo(Block* other) {
@@ -283,6 +287,7 @@ DeleteInfo Block::DoMerge(uint32_t child_index) {
     manager_.DeallocBlock(child_block_index);
     return DeleteInfo::Merge();
   }
+  child.UnBind();
   // 分别向相邻节点借child过来，如果相邻节点都不能借，则合并节点。
   uint32_t left_child_index = 0;
   uint32_t right_child_index = 0;

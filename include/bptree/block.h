@@ -208,7 +208,8 @@ class BlockBase {
 
   virtual ~BlockBase() {
     if (dirty_ == true) {
-      std::cerr << "warn : block " << index_ << " destruct in dirty state, maybe throw exception or some inner error!" << std::endl;
+      std::cerr << "warn : block " << index_ << " destruct in dirty state, maybe throw exception or some inner error!"
+                << std::endl;
     }
   }
 
@@ -531,16 +532,13 @@ class Block : public BlockBase {
    * 以下函数涉及block的分裂和合并相关操作
    */
 
-  uint32_t GetMaxEntrySize() const {
-    return (block_size - GetMetaSpace()) / GetEntrySize();
-  }
+  uint32_t GetMaxEntrySize() const { return (block_size - GetMetaSpace()) / GetEntrySize(); }
 
-  bool CheckIfNeedToMerge() noexcept {
-    return kv_view_.size() * 2 < GetMaxEntrySize();
-  }
+  bool CheckIfNeedToMerge() noexcept { return kv_view_.size() * 2 < GetMaxEntrySize(); }
 
   bool CheckCanMerge(Block* b1, Block* b2) noexcept {
-    return b1->kv_view_.size() + b2->kv_view_.size() <= GetMaxEntrySize();
+    assert(b1->key_size_ == b2->key_size_ && b1->value_size_ == b2->value_size_);
+    return b1->kv_view_.size() + b2->kv_view_.size() <= b1->GetMaxEntrySize();
   }
 
   void UpdateBlockPrevIndex(uint32_t block_index, uint32_t prev) noexcept;

@@ -12,6 +12,7 @@
 #include "bptree/block.h"
 #include "bptree/cache.h"
 #include "bptree/exception.h"
+#include "bptree/log.h"
 #include "bptree/util.h"
 
 namespace bptree {
@@ -59,7 +60,8 @@ class BlockManager {
       super_block_.free_block_head_ = 0;
       super_block_.current_max_block_index_ = 1;
       // root block
-      auto root_block = std::unique_ptr<Block>(new Block(*this, super_block_.root_index_, 1, option.key_size, option.value_size));
+      auto root_block =
+          std::unique_ptr<Block>(new Block(*this, super_block_.root_index_, 1, option.key_size, option.value_size));
       block_cache_.Get(super_block_.root_index_, std::move(root_block));
       f_ = fopen(file_name_.c_str(), "wb+");
       if (f_ == nullptr) {
@@ -82,6 +84,7 @@ class BlockManager {
   typename LRUCache<uint32_t, Block>::Wrapper GetBlock(uint32_t index) { return block_cache_.Get(index); }
 
   std::pair<uint32_t, uint32_t> BlockSplit(const Block* block) {
+    BPTREE_LOG_INFO("block split");
     uint32_t new_block_1_index = AllocNewBlock(block->GetHeight());
     uint32_t new_block_2_index = AllocNewBlock(block->GetHeight());
     auto new_block_1 = block_cache_.Get(new_block_1_index);
@@ -90,19 +93,20 @@ class BlockManager {
     for (size_t i = 0; i < half_count; ++i) {
       bool succ = new_block_1.Get().InsertKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view);
       if (succ == false) {
-        throw BptreeExecption("block broken");
+        throw BptreeExecption("block broken, insert nth kv : ", std::to_string(i));
       }
     }
     for (int i = half_count; i < block->GetKVView().size(); ++i) {
       bool succ = new_block_2.Get().InsertKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view);
       if (succ == false) {
-        throw BptreeExecption("block broken");
+        throw BptreeExecption("block broken, insert nth kv : ", std::to_string(i));
       }
     }
     return {new_block_1_index, new_block_2_index};
   }
 
   uint32_t BlockMerge(const Block* b1, const Block* b2) {
+    BPTREE_LOG_INFO("block merge");
     uint32_t new_block_index = AllocNewBlock(b1->GetHeight());
     auto new_block = block_cache_.Get(new_block_index);
     for (size_t i = 0; i < b1->GetKVView().size(); ++i) {
@@ -224,24 +228,23 @@ class BlockManager {
   }
 
   void DeallocBlock(uint32_t index, bool update_link_relation = true) {
-    {
-      auto block = block_cache_.Get(index);
-      if (update_link_relation == true) {
-        uint32_t next = block.Get().GetNext();
-        uint32_t prev = block.Get().GetPrev();
-        if (next != 0) {
-          auto next_block = block_cache_.Get(next);
-          next_block.Get().SetPrev(prev);
-        }
-        if (prev != 0) {
-          auto prev_block = block_cache_.Get(prev);
-          prev_block.Get().SetNext(next);
-        }
+    auto block = block_cache_.Get(index);
+    if (update_link_relation == true) {
+      uint32_t next = block.Get().GetNext();
+      uint32_t prev = block.Get().GetPrev();
+      if (next != 0) {
+        auto next_block = block_cache_.Get(next);
+        next_block.Get().SetPrev(prev);
       }
-      block.Get().Clear();
-      block.Get().SetNextFreeIndex(super_block_.free_block_head_);
-      super_block_.free_block_head_ = index;
+      if (prev != 0) {
+        auto prev_block = block_cache_.Get(prev);
+        prev_block.Get().SetNext(next);
+      }
     }
+    block.Get().Clear();
+    block.Get().SetNextFreeIndex(super_block_.free_block_head_);
+    block.UnBind();
+    super_block_.free_block_head_ = index;
     // cache中也要删除
     bool succ = block_cache_.Delete(index, true);
     assert(succ == true);
@@ -313,9 +316,7 @@ class BlockManager {
     block.Get().Print();
   }
 
-  void PrintCacheInfo() {
-    block_cache_.PrintInfo();
-  }
+  void PrintCacheInfo() { block_cache_.PrintInfo(); }
 
  private:
   LRUCache<uint32_t, Block> block_cache_;

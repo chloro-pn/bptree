@@ -1,10 +1,10 @@
 #pragma once
 
 #include <functional>
+#include <iostream>
 #include <list>
 #include <memory>
 #include <unordered_map>
-#include <iostream>
 
 #include "bptree/log.h"
 #include "exception.h"
@@ -107,6 +107,7 @@ class LRUCache {
     if (cache_.count(key) != 0) {
       Entry& entry = cache_[key];
       if (entry.use_ref_ != 0) {
+        BPTREE_LOG_WARN("cache delete error, key == {} already in use, use_ref == {}", key, entry.use_ref_);
         return false;
       }
       lru_list_.erase(entry.iter);
@@ -115,6 +116,7 @@ class LRUCache {
       }
       cache_.erase(key);
     }
+    return true;
   }
 
   void MoveInUseToLruList(Key key, Entry& entry) {

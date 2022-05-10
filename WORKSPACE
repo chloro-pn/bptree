@@ -12,3 +12,10 @@ new_git_repository(
     branch = "master",
     build_file = "//third_party:crc.build",
 )
+
+new_git_repository(
+    name = "spdlog",
+    remote = "https://github.com/gabime/spdlog",
+    branch = "v1.x",
+    build_file = "//third_party:spdlog.build",
+)

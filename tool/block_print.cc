@@ -1,7 +1,7 @@
-#include "bptree/block_manager.h"
-
 #include <iostream>
 #include <string>
+
+#include "bptree/block_manager.h"
 
 int main(int argc, char* argv[]) {
   if (argc != 3) {

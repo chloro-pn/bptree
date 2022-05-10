@@ -2,7 +2,7 @@
 
 #include "gtest/gtest.h"
 
-TEST(block_manager, all) {
+TEST(block_manager, base) {
   bptree::BlockManagerOption option;
   option.file_name = "test.db";
   option.create = true;

@@ -8,6 +8,7 @@ cc_library(
   includes = ["include"],
   deps = [
     "@crc32//:crc32c",
+    "@spdlog//:spdlog",
   ]
 )
 
