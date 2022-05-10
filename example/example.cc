@@ -1,7 +1,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
-#include <vector>
 
 #include "bptree/block_manager.h"
 #include "spdlog/spdlog.h"
@@ -23,6 +22,7 @@ std::vector<std::pair<std::string, std::string>> ConstructRandomKv(size_t size, 
 }
 
 int main() {
+  bptree::LogInit();
   BPTREE_LOG_DEBUG("create db : test.db and insert 10w kvs");
   bptree::BlockManagerOption option;
   option.file_name = "test.db";

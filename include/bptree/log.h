@@ -12,8 +12,11 @@
 #define BPTREE_LOG_ERROR(...) spdlog::error(__VA_ARGS__);
 
 namespace bptree {
-inline void LogInit(const std::string& filename) {
-  auto logger = spdlog::rotating_logger_mt("file_logger", filename, 1024 * 1024 * 10, 3);
-  spdlog::set_default_logger(logger);
+inline void LogInit(const std::string& filename = "") {
+  if (filename != "") {
+    auto logger = spdlog::rotating_logger_mt("file_logger", filename, 1024 * 1024 * 10, 3);
+    spdlog::set_default_logger(logger);
+  }
+  spdlog::set_level(spdlog::level::debug);
 }
 }  // namespace bptree

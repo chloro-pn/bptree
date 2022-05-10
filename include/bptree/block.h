@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <concepts>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -13,6 +14,7 @@
 #include <vector>
 
 #include "bptree/exception.h"
+#include "bptree/log.h"
 #include "crc32.h"
 
 namespace bptree {
@@ -41,9 +43,12 @@ inline std::string ConstructIndexByNum(uint32_t n) noexcept {
   return result;
 }
 
+template <typename T>
+concept NotString = !std::is_same_v<std::decay_t<T>, std::string>;
+
 // tested
-template <size_t n, typename T, typename std::enable_if<!std::is_same<T, std::string>::value, int>::type = 0>
-inline size_t AppendToBuf(uint8_t (&buf)[n], const T& t, size_t start_point) noexcept {
+template <size_t n, typename T>
+requires NotString<T> inline size_t AppendToBuf(uint8_t (&buf)[n], const T& t, size_t start_point) noexcept {
   memcpy((void*)&buf[start_point], &t, sizeof(T));
   start_point += sizeof(T);
   assert(start_point <= n);
@@ -63,8 +68,8 @@ inline size_t AppendStrToBuf(uint8_t (&buf)[n], const std::string& str, size_t s
 }
 
 // tested
-template <size_t n, typename T, typename std::enable_if<!std::is_same<T, std::string>::value, int>::type = 0>
-inline size_t ParseFromBuf(uint8_t (&buf)[n], T& t, size_t start_point) noexcept {
+template <size_t n, typename T>
+requires NotString<T> inline size_t ParseFromBuf(uint8_t (&buf)[n], T& t, size_t start_point) noexcept {
   memcpy(&t, &buf[start_point], sizeof(T));
   start_point += sizeof(T);
   assert(start_point <= n);
@@ -573,6 +578,10 @@ class SuperBlock : public BlockBase {
     offset = AppendToBuf(buf_, value_size_, offset);
     offset = AppendToBuf(buf_, free_block_head_, offset);
     offset = AppendToBuf(buf_, current_max_block_index_, offset);
+    BPTREE_LOG_INFO(
+        "flush super block to disk, root_index = {}, key_size = {}, value_size = {}, free_block_head = {}, "
+        "current_max_block_index = {}",
+        root_index_, key_size_, value_size_, free_block_head_, current_max_block_index_);
   }
 
   void ParseFromBuf(size_t offset) noexcept override {
@@ -582,6 +591,10 @@ class SuperBlock : public BlockBase {
     offset = ::bptree::ParseFromBuf(buf_, value_size_, offset);
     offset = ::bptree::ParseFromBuf(buf_, free_block_head_, offset);
     offset = ::bptree::ParseFromBuf(buf_, current_max_block_index_, offset);
+    BPTREE_LOG_INFO(
+        "parse super block succ, root_index = {}, key_size = {}, value_size = {}, free_block_head = {}, "
+        "current_max_block_index = {}",
+        root_index_, key_size_, value_size_, free_block_head_, current_max_block_index_);
   }
 
   uint32_t root_index_;

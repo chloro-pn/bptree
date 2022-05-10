@@ -67,6 +67,7 @@ class BlockManager {
       if (f_ == nullptr) {
         throw BptreeExecption("file " + file_name_ + " open fail");
       }
+      BPTREE_LOG_INFO("create db {} succ", file_name_);
     } else {
       if (option.create == true) {
         throw BptreeExecption("file ", file_name_, " already exists");
@@ -76,6 +77,7 @@ class BlockManager {
         throw BptreeExecption("file " + file_name_ + " open fail");
       }
       ParseSuperBlockFromFile();
+      BPTREE_LOG_INFO("open db {} succ", file_name_);
     }
   }
 
@@ -84,7 +86,6 @@ class BlockManager {
   typename LRUCache<uint32_t, Block>::Wrapper GetBlock(uint32_t index) { return block_cache_.Get(index); }
 
   std::pair<uint32_t, uint32_t> BlockSplit(const Block* block) {
-    BPTREE_LOG_INFO("block split");
     uint32_t new_block_1_index = AllocNewBlock(block->GetHeight());
     uint32_t new_block_2_index = AllocNewBlock(block->GetHeight());
     auto new_block_1 = block_cache_.Get(new_block_1_index);
@@ -106,7 +107,6 @@ class BlockManager {
   }
 
   uint32_t BlockMerge(const Block* b1, const Block* b2) {
-    BPTREE_LOG_INFO("block merge");
     uint32_t new_block_index = AllocNewBlock(b1->GetHeight());
     auto new_block = block_cache_.Get(new_block_index);
     for (size_t i = 0; i < b1->GetKVView().size(); ++i) {

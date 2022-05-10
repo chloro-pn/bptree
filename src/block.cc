@@ -45,15 +45,19 @@ std::string Block::Get(const std::string& key) {
         return manager_.GetBlock(child_index).Get().Get(key);
       }
     }
-    return std::string();
+    BPTREE_LOG_DEBUG("get {} from inner block {}, not found", key, GetIndex());
+    return "";
   } else {
     for (size_t i = 0; i < kv_view_.size(); ++i) {
       if (kv_view_[i].key_view == key) {
         uint32_t offset = GetOffsetByEntryIndex(kv_view_[i].index);
-        return std::string(GetEntryValueView(offset));
+        std::string result = std::string(GetEntryValueView(offset));
+        BPTREE_LOG_DEBUG("get {} from leaf block {}, value == {}", key, GetIndex(), result);
+        return result;
       }
     }
   }
+  BPTREE_LOG_DEBUG("get {} from leaf block {}, not found", key, GetIndex());
   return "";
 }
 
@@ -66,6 +70,7 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value) {
       bool succ = InsertKv(key, ConstructIndexByNum(child_block_index));
       // 只插入一个元素，不应该失败
       assert(succ == true);
+      BPTREE_LOG_DEBUG("insert ({}, {}) to a new block {}", key, value, manager_.GetBlock(child_block_index).Get().GetIndex());
       return InsertInfo::Ok();
     }
     int32_t child_index = -1;
@@ -82,6 +87,7 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value) {
     uint32_t child_block_index = GetChildIndex(child_index);
     InsertInfo info = manager_.GetBlock(child_block_index).Get().Insert(key, value);
     if (info.state_ == InsertInfo::State::Ok) {
+      BPTREE_LOG_DEBUG("insert ({}, {}) to inner block {}, no split", key, value, GetIndex());
       return info;
     }
     return DoSplit(child_index, info.key_, info.value_);
@@ -89,12 +95,15 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value) {
     auto it = std::find_if(kv_view_.begin(), kv_view_.end(), [&](const Entry& n) -> bool { return n.key_view == key; });
     if (it != kv_view_.end()) {
       UpdateEntryValue(it->index, value);
+      BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {}, the key already exists, update value", key, value, GetIndex());
       return InsertInfo::Ok();
     }
     bool succ = InsertKv(key, value);
     if (succ == false) {
+      BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {} results in a split", key, value, GetIndex());
       return InsertInfo::Split(key, value);
     } else {
+      BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {} succ, no split", key, value, GetIndex());
       return InsertInfo::Ok();
     }
   }
@@ -113,9 +122,11 @@ DeleteInfo Block::Delete(const std::string& key) {
         assert(info.state_ != DeleteInfo::State::Invalid);
         if (kv_view_[i].key_view == key && block.Get().GetKVView().size() != 0) {
           // 更新maxkey的记录，如果子节点block的kv为空不需要处理，因为后面会在DoMerge中删除这个节点
+          BPTREE_LOG_DEBUG("update inner block {}'s key because of delete, key == {}", GetIndex(), key);
           UpdateEntryKey(kv_view_[i].index, block.Get().GetMaxKey());
         }
         if (info.state_ == DeleteInfo::State::Ok) {
+          BPTREE_LOG_DEBUG("delete key {} from inner block {}, no merge", key, block.Get().GetIndex());
           return info;
         } else {
           block.UnBind();
@@ -125,6 +136,7 @@ DeleteInfo Block::Delete(const std::string& key) {
       }
     }
     // 不存在这个key
+    BPTREE_LOG_DEBUG("delete the key {} that is not exist", key);
     return DeleteInfo::Ok();
   } else {
     for (auto it = kv_view_.begin(); it != kv_view_.end(); ++it) {
@@ -135,8 +147,10 @@ DeleteInfo Block::Delete(const std::string& key) {
       }
     }
     if (CheckIfNeedToMerge() == true) {
+      BPTREE_LOG_DEBUG("delete key {} from leaf block {} results in merge", key, GetIndex());
       return DeleteInfo::Merge();
     } else {
+      BPTREE_LOG_DEBUG("delete key {} from leaf block {} succ, no merge", key, GetIndex())
       return DeleteInfo::Ok();
     }
   }
@@ -268,6 +282,7 @@ InsertInfo Block::DoSplit(uint32_t child_index, const std::string& key, const st
   // 更新本节点的索引
   UpdateByIndex(child_index, block_1_max_key, ConstructIndexByNum(new_block_1_index));
   bool succ = InsertKv(block_2_max_key, ConstructIndexByNum(new_block_2_index));
+  BPTREE_LOG_DEBUG("block split from {} to {} and {}", block_index, new_block_1_index, new_block_2_index);
   if (succ == false) {
     return InsertInfo::Split(block_2_max_key, ConstructIndexByNum(new_block_2_index));
   }
@@ -324,7 +339,9 @@ DeleteInfo Block::DoMerge(uint32_t child_index) {
     right_child.UnBind();
     manager_.DeallocBlock(left_block_index);
     manager_.DeallocBlock(right_block_index);
+    BPTREE_LOG_DEBUG("block merge from {} and {} to {}", left_block_index, right_block_index, new_block_index)
   } else {
+    BPTREE_LOG_DEBUG("block {} and {} rebalance", left_block_index, right_block_index);
     // 不能合并，两个节点中的一个必然含有较多的项，rebalance一下即可。
     if (left_child.Get().CheckIfNeedToMerge()) {
       right_child.Get().MoveFirstElementTo(&left_child.Get());
@@ -334,7 +351,6 @@ DeleteInfo Block::DoMerge(uint32_t child_index) {
     auto key_view = UpdateEntryKey(kv_view_[left_child_index].index, left_child.Get().GetMaxKey());
     kv_view_[left_child_index].key_view = key_view;
   }
-
   // 判断经过删除后，本节点是否需要merge，并将判断情况交给父节点处理
   if (CheckIfNeedToMerge()) {
     return DeleteInfo::Merge();
