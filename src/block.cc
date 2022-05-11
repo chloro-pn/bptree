@@ -161,6 +161,31 @@ DeleteInfo Block::Delete(const std::string& key) {
   return obj;
 }
 
+bool Block::Update(const std::string& key, const std::function<void(char* const ptr, size_t len)>& updator) {
+  assert(GetHeight() != super_height);
+  if (GetHeight() > 0) {
+    for (size_t i = 0; i < kv_view_.size(); ++i) {
+      if (key <= kv_view_[i].key_view) {
+        return manager_.GetBlock(GetChildIndex(i)).Get().Update(key, updator);
+      }
+    }
+    return false;
+  } else {
+    auto it = std::find_if(kv_view_.begin(), kv_view_.end(), [&](const Entry& n) -> bool { return n.key_view == key; });
+    if (it != kv_view_.end()) {
+      // const_cast只能修改底层const
+      char* const ptr = const_cast<char* const>(it->value_view.data());
+      size_t len = it->value_view.size();
+      updator(ptr, len);
+      SetDirty();
+      BPTREE_LOG_DEBUG("update key {} in block {} succ", key, GetIndex());
+      return true;
+    }
+  }
+  return false;
+}
+
+// todo 优化，std::lower_bound不能使用在这里，需要自己实现
 bool Block::InsertKv(const std::string_view& key, const std::string_view& value) noexcept {
   uint32_t prev_index = std::numeric_limits<uint32_t>::max();
   for (size_t i = 0; i < kv_view_.size(); ++i) {

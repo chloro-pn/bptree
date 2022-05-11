@@ -29,12 +29,12 @@ class LRUCache {
         : holder_(cache), key_(key), value_(v), unbinded_(false) {
       assert(value_.use_ref_ > 0);
     }
-    // move-only type
+
     Wrapper(const Wrapper&) = delete;
     Wrapper& operator=(const Wrapper&) = delete;
 
-    Wrapper(Wrapper&&) = default;
-    Wrapper& operator=(Wrapper&&) = default;
+    Wrapper(Wrapper&& other) = delete;
+    Wrapper& operator=(Wrapper&& other) = delete;
 
     Value& Get() { return *value_.value.get(); }
 

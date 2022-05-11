@@ -287,6 +287,8 @@ class Block : public BlockBase {
 
   DeleteInfo Delete(const std::string& key);
 
+  bool Update(const std::string& key, const std::function<void(char* const ptr, size_t len)>& updator);
+
   void Print();
 
   void FlushToBuf(size_t offset) noexcept override {
@@ -568,6 +570,7 @@ class SuperBlock : public BlockBase {
         key_size_(key_size),
         value_size_(value_size),
         free_block_head_(0),
+        free_block_size_(0),
         current_max_block_index_(1) {
     dirty_ = true;
   }
@@ -577,11 +580,8 @@ class SuperBlock : public BlockBase {
     offset = AppendToBuf(buf_, key_size_, offset);
     offset = AppendToBuf(buf_, value_size_, offset);
     offset = AppendToBuf(buf_, free_block_head_, offset);
+    offset = AppendToBuf(buf_, free_block_size_, offset);
     offset = AppendToBuf(buf_, current_max_block_index_, offset);
-    BPTREE_LOG_INFO(
-        "flush super block to disk, root_index = {}, key_size = {}, value_size = {}, free_block_head = {}, "
-        "current_max_block_index = {}",
-        root_index_, key_size_, value_size_, free_block_head_, current_max_block_index_);
   }
 
   void ParseFromBuf(size_t offset) noexcept override {
@@ -590,11 +590,8 @@ class SuperBlock : public BlockBase {
     offset = ::bptree::ParseFromBuf(buf_, key_size_, offset);
     offset = ::bptree::ParseFromBuf(buf_, value_size_, offset);
     offset = ::bptree::ParseFromBuf(buf_, free_block_head_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, free_block_size_, offset);
     offset = ::bptree::ParseFromBuf(buf_, current_max_block_index_, offset);
-    BPTREE_LOG_INFO(
-        "parse super block succ, root_index = {}, key_size = {}, value_size = {}, free_block_head = {}, "
-        "current_max_block_index = {}",
-        root_index_, key_size_, value_size_, free_block_head_, current_max_block_index_);
   }
 
   uint32_t root_index_;
@@ -602,6 +599,7 @@ class SuperBlock : public BlockBase {
   uint32_t value_size_;
   // free_block_head_ == 0意味着当前分配的所有block满了，需要分配新的block
   uint32_t free_block_head_;
+  uint32_t free_block_size_;
   uint32_t current_max_block_index_;
 };
 

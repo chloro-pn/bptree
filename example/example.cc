@@ -82,6 +82,7 @@ int main() {
     }
   }
   BPTREE_LOG_INFO("all check succ");
+  manager.PrintSuperBlockInfo();
   // std::filesystem::remove(std::filesystem::path("test.db"));
   return 0;
 }

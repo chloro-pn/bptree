@@ -14,7 +14,12 @@ int main(int argc, char* argv[]) {
     option.file_name = name;
     option.create = false;
     bptree::BlockManager manager(option);
-    manager.PrintBlockByIndex(atol(argv[2]));
+    uint32_t block_index = atol(argv[2]);
+    if (block_index == 0) {
+      manager.PrintSuperBlockInfo();
+    } else {
+      manager.PrintBlockByIndex(block_index);
+    }
   } catch (const bptree::BptreeExecption& e) {
     std::cerr << "sth error, " << e.what() << std::endl;
   }

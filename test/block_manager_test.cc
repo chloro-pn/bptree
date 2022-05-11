@@ -17,6 +17,20 @@ TEST(block_manager, base) {
   manager.Insert("b", "bbbbb");
   value = manager.Get("c");
   EXPECT_EQ(std::string(""), value);
+  EXPECT_EQ("value", manager.Get("a"));
+  EXPECT_EQ("bbbbb", manager.Get("b"));
+
+  bool do_update = false;
+  bool succ = manager.Update("c", [&do_update](char* const ptr, size_t len) { do_update = true; });
+  EXPECT_EQ(do_update, false);
+  EXPECT_EQ(succ, false);
+
+  bool succ2 = manager.Update("a", [&do_update](char* const ptr, size_t len) {
+    ptr[1] = 'a';
+    ptr[len - 1] = 'a';
+  });
+  EXPECT_TRUE(succ2);
+  EXPECT_EQ("valua", manager.Get("a"));
 }
 
 TEST(block_manager, getrange) {

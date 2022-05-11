@@ -34,6 +34,8 @@ struct BlockManagerOption {
 
 class BlockManager {
  public:
+  friend class Block;
+
   explicit BlockManager(BlockManagerOption option)
       : block_cache_(1024, [this](const uint32_t key) -> std::unique_ptr<Block> { return this->LoadBlock(key); }),
         file_name_(option.file_name),
@@ -87,6 +89,129 @@ class BlockManager {
 
   uint32_t GetRootIndex() const noexcept { return super_block_.root_index_; }
 
+  // 单点查找，如果db中存在key，返回对应的value，否则返回""
+  std::string Get(const std::string& key) {
+    if (key.size() != super_block_.key_size_) {
+      throw BptreeExecption("wrong key length");
+    }
+    auto block = block_cache_.Get(super_block_.root_index_);
+    std::string result = block.Get().Get(key);
+    return result;
+  }
+
+  // 范围查找，key为需要查找的起始点，对后续的每个kv调用functor，根据返回值确定结束范围查找 or 跳过 or 选择
+  std::vector<std::pair<std::string, std::string>> GetRange(const std::string& key,
+                                                            std::function<GetRangeOption(const Entry& entry)> functor) {
+    if (key.size() != super_block_.key_size_) {
+      throw BptreeExecption("wrong key length");
+    }
+    auto location = block_cache_.Get(super_block_.root_index_).Get().GetBlockIndexContainKey(key);
+    if (location.first == 0) {
+      return {};
+    }
+    std::vector<std::pair<std::string, std::string>> result;
+    uint32_t block_index = location.first;
+    uint32_t view_index = location.second;
+    while (block_index != 0) {
+      auto block = block_cache_.Get(block_index);
+      for (size_t i = view_index; i < block.Get().GetKVView().size(); ++i) {
+        const Entry& entry = block.Get().GetViewByIndex(i);
+        GetRangeOption state = functor(entry);
+        if (state == GetRangeOption::SKIP) {
+          continue;
+        } else if (state == GetRangeOption::SELECT) {
+          result.push_back({std::string(entry.key_view), std::string(entry.value_view)});
+        } else {
+          return result;
+        }
+      }
+      // 下一个block
+      block_index = block.Get().GetNext();
+      view_index = 0;
+    }
+    return result;
+  }
+
+  // 插入，如果key已经存在于db中，执行更新操作
+  void Insert(const std::string& key, const std::string& value) {
+    if (key.size() != super_block_.key_size_ || value.size() != super_block_.value_size_) {
+      throw BptreeExecption("wrong kv length");
+    }
+    InsertInfo info = block_cache_.Get(super_block_.root_index_).Get().Insert(key, value);
+    if (info.state_ == InsertInfo::State::Split) {
+      // 根节点的分裂
+      uint32_t old_root_index = super_block_.root_index_;
+      auto old_root = block_cache_.Get(super_block_.root_index_);
+      uint32_t old_root_height = old_root.Get().GetHeight();
+      auto new_blocks = BlockSplit(&old_root.Get());
+
+      auto left_block = block_cache_.Get(new_blocks.first);
+      auto right_block = block_cache_.Get(new_blocks.second);
+      // update link
+      left_block.Get().SetNext(new_blocks.second);
+      right_block.Get().SetPrev(new_blocks.first);
+      // insert
+      if (info.key_ <= left_block.Get().GetMaxKey()) {
+        left_block.Get().InsertKv(info.key_, info.value_);
+      } else {
+        right_block.Get().InsertKv(info.key_, info.value_);
+      }
+      // update root
+      old_root.Get().Clear();
+      old_root.Get().SetHeight(old_root_height + 1);
+      old_root.Get().InsertKv(left_block.Get().GetMaxKey(), ConstructIndexByNum(new_blocks.first));
+      old_root.Get().InsertKv(right_block.Get().GetMaxKey(), ConstructIndexByNum(new_blocks.second));
+    }
+    return;
+  }
+
+  // 删除
+  void Delete(const std::string& key) {
+    if (key.size() != super_block_.key_size_) {
+      throw BptreeExecption("wrong key length");
+    }
+    // 根节点的merge信息不处理
+    block_cache_.Get(super_block_.root_index_).Get().Delete(key);
+  }
+
+  // 更新，如果key不在db中，直接返回，否则会将对应的value在内存中的缓存传递给updator，由update执行更新，bptree负责将数据重新刷回硬盘
+  bool Update(const std::string& key, const std::function<void(char* const ptr, size_t len)>& updator) {
+    if (key.size() != super_block_.key_size_) {
+      throw BptreeExecption("wrong key length");
+    }
+    return block_cache_.Get(super_block_.root_index_).Get().Update(key, updator);
+  }
+
+  void PrintRootBlock() {
+    auto root_block = block_cache_.Get(super_block_.root_index_);
+    root_block.Get().Print();
+  }
+
+  void PrintBlockByIndex(uint32_t index) {
+    if (index == 0) {
+      throw BptreeExecption("should not print super block");
+    }
+    if (super_block_.current_max_block_index_ < index) {
+      throw BptreeExecption("request block's index invalid : ", std::to_string(index));
+    }
+    auto block = block_cache_.Get(index);
+    block.Get().Print();
+  }
+
+  void PrintCacheInfo() { block_cache_.PrintInfo(); }
+
+  void PrintSuperBlockInfo() {
+    BPTREE_LOG_INFO("-----begin super block print-----");
+    BPTREE_LOG_INFO("root_index : {}", super_block_.root_index_);
+    BPTREE_LOG_INFO("key size and value size : {} {}", super_block_.key_size_, super_block_.value_size_);
+    BPTREE_LOG_INFO("free block size : {}", super_block_.free_block_size_);
+    BPTREE_LOG_INFO("total block size : {}", super_block_.current_max_block_index_ + 1);
+    double tmp = double(super_block_.free_block_size_) / double(super_block_.current_max_block_index_ + 1);
+    BPTREE_LOG_INFO("free_block_size / total_block_size : {}", tmp);
+    BPTREE_LOG_INFO("------end super block print------");
+  }
+
+ private:
   std::pair<uint32_t, uint32_t> BlockSplit(const Block* block) {
     uint32_t new_block_1_index = AllocNewBlock(block->GetHeight());
     uint32_t new_block_2_index = AllocNewBlock(block->GetHeight());
@@ -126,88 +251,6 @@ class BlockManager {
     return new_block_index;
   }
 
-  std::string Get(const std::string& key) {
-    if (key.size() != super_block_.key_size_) {
-      throw BptreeExecption("wrong key length");
-    }
-    auto block = block_cache_.Get(super_block_.root_index_);
-    std::string result = block.Get().Get(key);
-    return result;
-  }
-
-  // 范围查找
-  std::vector<std::pair<std::string, std::string>> GetRange(const std::string& key,
-                                                            std::function<GetRangeOption(const Entry& entry)> functor) {
-    if (key.size() != super_block_.key_size_) {
-      throw BptreeExecption("wrong key length");
-    }
-    auto location = block_cache_.Get(super_block_.root_index_).Get().GetBlockIndexContainKey(key);
-    if (location.first == 0) {
-      return {};
-    }
-    std::vector<std::pair<std::string, std::string>> result;
-    uint32_t block_index = location.first;
-    uint32_t view_index = location.second;
-    while (block_index != 0) {
-      auto block = block_cache_.Get(block_index);
-      for (size_t i = view_index; i < block.Get().GetKVView().size(); ++i) {
-        const Entry& entry = block.Get().GetViewByIndex(i);
-        GetRangeOption state = functor(entry);
-        if (state == GetRangeOption::SKIP) {
-          continue;
-        } else if (state == GetRangeOption::SELECT) {
-          result.push_back({std::string(entry.key_view), std::string(entry.value_view)});
-        } else {
-          return result;
-        }
-      }
-      // 下一个block
-      block_index = block.Get().GetNext();
-      view_index = 0;
-    }
-    return result;
-  }
-
-  void Insert(const std::string& key, const std::string& value) {
-    if (key.size() != super_block_.key_size_ || value.size() != super_block_.value_size_) {
-      throw BptreeExecption("wrong kv length");
-    }
-    InsertInfo info = block_cache_.Get(super_block_.root_index_).Get().Insert(key, value);
-    if (info.state_ == InsertInfo::State::Split) {
-      // 根节点的分裂
-      uint32_t old_root_index = super_block_.root_index_;
-      auto old_root = block_cache_.Get(super_block_.root_index_);
-      uint32_t old_root_height = old_root.Get().GetHeight();
-      auto new_blocks = BlockSplit(&old_root.Get());
-
-      auto left_block = block_cache_.Get(new_blocks.first);
-      auto right_block = block_cache_.Get(new_blocks.second);
-      // update link
-      left_block.Get().SetNext(new_blocks.second);
-      right_block.Get().SetPrev(new_blocks.first);
-      // insert
-      if (info.key_ <= left_block.Get().GetMaxKey()) {
-        left_block.Get().InsertKv(info.key_, info.value_);
-      } else {
-        right_block.Get().InsertKv(info.key_, info.value_);
-      }
-      // update root
-      old_root.Get().Clear();
-      old_root.Get().SetHeight(old_root_height + 1);
-      old_root.Get().InsertKv(left_block.Get().GetMaxKey(), ConstructIndexByNum(new_blocks.first));
-      old_root.Get().InsertKv(right_block.Get().GetMaxKey(), ConstructIndexByNum(new_blocks.second));
-    }
-    return;
-  }
-
-  void Delete(const std::string& key) {
-    if (key.size() != super_block_.key_size_) {
-      throw BptreeExecption("wrong key length");
-    }
-    // 根节点的merge信息不处理
-    block_cache_.Get(super_block_.root_index_).Get().Delete(key);
-  }
-
   // 申请一个新的Block
   uint32_t AllocNewBlock(uint32_t height) {
     uint32_t result = 0;
@@ -219,6 +262,8 @@ class BlockManager {
         auto block = block_cache_.Get(super_block_.free_block_head_);
         super_block_.free_block_head_ = block.Get().GetNextFreeIndex();
         result = block.Get().GetIndex();
+        assert(super_block_.free_block_size_ > 0);
+        super_block_.free_block_size_ -= 1;
       }
       bool succ = block_cache_.Delete(result, false);
       assert(succ == true);
@@ -248,6 +293,7 @@ class BlockManager {
     block.UnBind();
     super_block_.free_block_head_ = index;
     // cache中也要删除
+    super_block_.free_block_size_ += 1;
     bool succ = block_cache_.Delete(index, true);
     assert(succ == true);
   }
@@ -289,7 +335,6 @@ class BlockManager {
 
   void OnBlockDestructor(Block& block) { block.Flush(); }
 
-  // 重构
   void FlushSuperBlockToFile(FILE* f) {
     super_block_.SetDirty();
     super_block_.Flush();
@@ -302,35 +347,17 @@ class BlockManager {
     GetBlock(super_block_.root_index_);
   }
 
-  void PrintRootBlock() {
-    auto root_block = block_cache_.Get(super_block_.root_index_);
-    root_block.Get().Print();
-  }
-
-  void PrintBlockByIndex(uint32_t index) {
-    if (index == 0) {
-      throw BptreeExecption("should not print super block");
-    }
-    if (super_block_.current_max_block_index_ < index) {
-      throw BptreeExecption("request block's index invalid : ", std::to_string(index));
-    }
-    auto block = block_cache_.Get(index);
-    block.Get().Print();
-  }
-
-  void PrintCacheInfo() { block_cache_.PrintInfo(); }
-
- private:
-  LRUCache<uint32_t, Block> block_cache_;
-  std::string file_name_;
-  SuperBlock super_block_;
-  FILE* f_;
-
   std::unique_ptr<Block> LoadBlock(uint32_t index) {
     std::unique_ptr<Block> new_block = std::unique_ptr<Block>(new Block(*this));
     ReadBlockFromFile(new_block.get(), index);
     new_block->Parse();
     return new_block;
   }
+
+ private:
+  LRUCache<uint32_t, Block> block_cache_;
+  std::string file_name_;
+  SuperBlock super_block_;
+  FILE* f_;
 };
 }  // namespace bptree

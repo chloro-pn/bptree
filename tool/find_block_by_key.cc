@@ -19,7 +19,8 @@ int main(int argc, char* argv[]) {
     if (position.first == 0) {
       BPTREE_LOG_ERROR("key {} is not in the db", key);
     } else {
-      BPTREE_LOG_INFO("the position of the key {} is in the {}th entry of the block {}", key, position.second, position.first);
+      BPTREE_LOG_INFO("the position of the key {} is in the {}th entry of the block {}", key, position.second,
+                      position.first);
     }
   } catch (const bptree::BptreeExecption& e) {
     std::cerr << "sth error, " << e.what() << std::endl;
