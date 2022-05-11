@@ -25,6 +25,12 @@ cc_binary(
   deps = [":bptree"],
 )
 
+cc_binary(
+  name = "find_block_by_key",
+  srcs = ["tool/find_block_by_key.cc"],
+  deps = [":bptree"],
+)
+
 cc_test(
   name = "bptree_test",
   srcs = glob(["test/*.cc"]),
