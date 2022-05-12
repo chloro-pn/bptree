@@ -226,7 +226,7 @@ void Block::UpdateBlockNextIndex(uint32_t block_index, uint32_t next) {
 }
 
 void Block::Print() {
-  BPTREE_LOG_INFO("-------begin block print-------");
+  BPTREE_LOG_INFO("-------begin to print block's info-------");
   BPTREE_LOG_INFO("index : {}", GetIndex());
   BPTREE_LOG_INFO("height : {}", GetHeight());
   if (next_free_index_ != not_free_flag) {
@@ -247,7 +247,7 @@ void Block::Print() {
     BPTREE_LOG_INFO("{} th kv : (next entry index){} (key){} (value){}", i, kv_view_[i].index, kv_view_[i].key_view,
                     value_str);
   }
-  BPTREE_LOG_INFO("--------end block print--------");
+  BPTREE_LOG_INFO("--------end to print block's info--------");
 }
 
 void Block::MoveFirstElementTo(Block* other) {

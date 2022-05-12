@@ -78,6 +78,7 @@ class LRUCache {
       in_use_.insert(in_use_.begin(), key);
       std::unique_ptr<Value> value = std::move(v);
       if (value == nullptr) {
+        BPTREE_LOG_DEBUG("block cache get {}, create v from if_not_exist", key);
         value = if_not_exist_(key);
       }
       Entry entry;
@@ -102,7 +103,6 @@ class LRUCache {
     return Wrapper(*this, key, cache_[key]);
   }
 
-  // 重构
   bool Delete(const Key& key, bool notify) {
     if (cache_.count(key) != 0) {
       Entry& entry = cache_[key];
@@ -140,10 +140,11 @@ class LRUCache {
   }
 
   void PrintInfo() const {
-    std::cout << "this is lru cache's info : " << std::endl;
-    std::cout << "list in_use_'s size is " << in_use_.size() << std::endl;
-    std::cout << "list lru_list's size is " << lru_list_.size() << std::endl;
-    std::cout << "cache's size is " << cache_.size() << std::endl;
+    BPTREE_LOG_INFO("---begin to print block_cache's info---");
+    BPTREE_LOG_INFO("the length of the list in_use is {}", in_use_.size());
+    BPTREE_LOG_INFO("the length of the list lru is {}", lru_list_.size());
+    BPTREE_LOG_INFO("the size of the map cache's {}", cache_.size());
+    BPTREE_LOG_INFO("----end to print block_cache's info----");
   }
 
   // 清空没有被使用的元素，如果还有在被使用的元素，返回false，否则返回true。

@@ -271,6 +271,7 @@ class BlockManager {
     auto new_block =
         std::unique_ptr<Block>(new Block(*this, result, height, super_block_.key_size_, super_block_.value_size_));
     block_cache_.Get(result, std::move(new_block));
+    BPTREE_LOG_DEBUG("alloc new block {}", result);
     return result;
   }
 
@@ -295,6 +296,7 @@ class BlockManager {
     // cache中也要删除
     super_block_.free_block_size_ += 1;
     bool succ = block_cache_.Delete(index, true);
+    BPTREE_LOG_DEBUG("dealloc block {}", index);
     assert(succ == true);
   }
 
@@ -332,9 +334,7 @@ class BlockManager {
       throw BptreeExecption("fwrite error");
     }
   }
-
-  void OnBlockDestructor(Block& block) { block.Flush(); }
-
+  
   void FlushSuperBlockToFile(FILE* f) {
     super_block_.SetDirty();
     super_block_.Flush();
