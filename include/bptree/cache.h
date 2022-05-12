@@ -11,6 +11,13 @@
 
 namespace bptree {
 
+/* class LRUCache 注释
+ * 该类采用基于LRU算法进行数据缓存
+ * 数据成员为两个链表：(in_use_和lru_list_)和一个map(cache_)，两个链表中仅存储key信息；两个链表的长度之和应该等于map.size()
+ * 采用引用计数的方法管理被用户持有的Value，当没有用户持有时首先将Value对应的Key插入lru_list_链表中，当lru_list_链表长度到达上限时从末尾开始执行clean操作
+ * 可以通过SetFreeNotify接口注册清理前的回调函数，便于执行某些不适合放在析构函数中的操作
+ * Get接口返回的是一个Wrapper类，该类基于RALL机制管理Value对象的引用计数，并且该类不支持copy和move
+ */
 template <typename Key, typename Value>
 class LRUCache {
  public:

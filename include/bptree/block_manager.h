@@ -334,7 +334,7 @@ class BlockManager {
       throw BptreeExecption("fwrite error");
     }
   }
-  
+
   void FlushSuperBlockToFile(FILE* f) {
     super_block_.SetDirty();
     super_block_.Flush();

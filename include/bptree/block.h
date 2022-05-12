@@ -309,7 +309,6 @@ class Block : public BlockBase {
     offset = ::bptree::ParseFromBuf(buf_, value_size_, offset);
     offset = ::bptree::ParseFromBuf(buf_, head_entry_, offset);
     offset = ::bptree::ParseFromBuf(buf_, free_list_, offset);
-
     uint32_t entry_index = head_entry_;
     while (entry_index != 0) {
       Entry entry;
