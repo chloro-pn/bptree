@@ -150,7 +150,7 @@ class LRUCache {
     BPTREE_LOG_INFO("---begin to print block_cache's info---");
     BPTREE_LOG_INFO("the length of the list in_use is {}", in_use_.size());
     BPTREE_LOG_INFO("the length of the list lru is {}", lru_list_.size());
-    BPTREE_LOG_INFO("the size of the map cache's {}", cache_.size());
+    BPTREE_LOG_INFO("the size of the map cache is {}", cache_.size());
     BPTREE_LOG_INFO("----end to print block_cache's info----");
   }
 
