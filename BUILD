@@ -20,6 +20,12 @@ cc_binary(
 )
 
 cc_binary(
+  name = "wal",
+  srcs = ["example/wal.cc"],
+  deps = [":bptree"],
+)
+
+cc_binary(
   name = "block_print",
   srcs = ["tool/block_print.cc"],
   deps = [":bptree"],

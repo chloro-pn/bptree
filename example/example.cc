@@ -59,10 +59,7 @@ int main() {
   BPTREE_LOG_INFO("print cache's info : ");
   manager.PrintCacheInfo();
 
-  std::sort(kvs.begin(), kvs.end(),
-            [](const Entry& n1, const Entry& n2) -> bool {
-              return n1.key < n2.key;
-            });
+  std::sort(kvs.begin(), kvs.end(), [](const Entry& n1, const Entry& n2) -> bool { return n1.key < n2.key; });
 
   BPTREE_LOG_INFO("randomly delete 10000 kvs");
   for (int i = 0; i < 10000; ++i) {
@@ -72,26 +69,27 @@ int main() {
   }
 
   std::vector<Entry> kvs_after_delete;
-  for(auto& each : kvs) {
+  for (auto& each : kvs) {
     if (each.delete_ == false) {
       kvs_after_delete.push_back(each);
     }
   }
 
   size_t count = 0;
-  auto get_kvs = manager.GetRange(kvs_after_delete[0].key, [&count](const bptree::Entry& entry) -> bptree::GetRangeOption {
-    if (count == 1000) {
-      return bptree::GetRangeOption::STOP;
-    }
-    ++count;
-    return bptree::GetRangeOption::SELECT;
-  });
+  auto get_kvs =
+      manager.GetRange(kvs_after_delete[0].key, [&count](const bptree::Entry& entry) -> bptree::GetRangeOption {
+        if (count == 1000) {
+          return bptree::GetRangeOption::STOP;
+        }
+        ++count;
+        return bptree::GetRangeOption::SELECT;
+      });
 
   BPTREE_LOG_INFO("range-get the first 1000 kvs and check them");
   for (size_t i = 0; i < get_kvs.size(); ++i) {
     if (kvs_after_delete[i].key != get_kvs[i].first || kvs_after_delete[i].value != get_kvs[i].second) {
-      BPTREE_LOG_INFO("range-get check error, {} != {} or {} != {}", kvs_after_delete[i].key, get_kvs[i].first, kvs_after_delete[i].value,
-                      get_kvs[i].second);
+      BPTREE_LOG_INFO("range-get check error, {} != {} or {} != {}", kvs_after_delete[i].key, get_kvs[i].first,
+                      kvs_after_delete[i].value, get_kvs[i].second);
       return -1;
     }
   }
