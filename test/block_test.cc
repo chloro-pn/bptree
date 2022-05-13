@@ -4,6 +4,7 @@
 #define protected public
 
 #include <string>
+#include <string_view>
 
 #include "bptree/block.h"
 #include "bptree/block_manager.h"
@@ -15,7 +16,7 @@ TEST(block, helper) {
   result = bptree::StringToUInt32t(std::string_view("invalid"));
   EXPECT_EQ(result, 0);
 
-  uint8_t buf[32];
+  char buf[32];
   size_t offset = bptree::AppendToBuf(buf, uint32_t(12138), 0);
   EXPECT_EQ(offset, sizeof(uint32_t));
   EXPECT_EQ(uint32_t(12138), *reinterpret_cast<uint32_t*>(&buf));
@@ -58,11 +59,11 @@ TEST(block, constructor) {
 
   std::string value = block.Get("a");
   EXPECT_EQ(value, "");
-  block.Insert("a", "value");
+  block.Insert("a", "value", bptree::no_wal_sequence);
   EXPECT_EQ("value", block.Get("a"));
-  block.Insert("b", "value");
+  block.Insert("b", "value", bptree::no_wal_sequence);
   EXPECT_EQ(block.GetMaxKey(), "b");
-  block.Delete("a");
+  block.Delete("a", bptree::no_wal_sequence);
   EXPECT_EQ("", block.Get("a"));
 
   uint32_t offset = block.GetOffsetByEntryIndex(block.head_entry_);
@@ -79,15 +80,15 @@ TEST(block, constructor) {
   EXPECT_EQ(value_v, "value");
   EXPECT_EQ(index, 0);
 
-  block.UpdateEntryKey(block.head_entry_, "c");
+  block.UpdateEntryKey(block.head_entry_, "c", bptree::no_wal_sequence);
   EXPECT_EQ(value_v, block.Get("c"));
 
   value_v = "vvvvv";
-  block.UpdateEntryValue(block.head_entry_, std::string(value_v));
+  block.UpdateEntryValue(block.head_entry_, std::string(value_v), bptree::no_wal_sequence);
   EXPECT_EQ(value_v, block.Get("c"));
 
-  block.SetEntryKey(offset, "d");
-  block.SetEntryValue(offset, "newvv");
+  block.SetEntryKey(offset, "d", bptree::no_wal_sequence);
+  block.SetEntryValue(offset, "newvv", bptree::no_wal_sequence);
   key = "";
   value_v = "";
   index = block.ParseEntry(block.head_entry_, key, value_v);
@@ -96,20 +97,20 @@ TEST(block, constructor) {
   EXPECT_EQ(index, 0);
 
   bool full = false;
-  auto entry = block.InsertEntry(block.head_entry_, "e", "value", full);
+  auto entry = block.InsertEntry(block.head_entry_, "e", "value", full, bptree::no_wal_sequence);
   EXPECT_EQ(full, false);
   EXPECT_EQ(block.GetEntryNext(offset), entry.index);
   EXPECT_EQ(block.GetEntryNext(block.GetOffsetByEntryIndex(entry.index)), 0);
   EXPECT_EQ(entry.key_view, "e");
   EXPECT_EQ(entry.value_view, "value");
 
-  block.UpdateByIndex(0, "f", "ffval");
+  block.UpdateByIndex(0, "f", "ffval", bptree::no_wal_sequence);
   offset = block.GetOffsetByEntryIndex(block.head_entry_);
   EXPECT_EQ(block.GetEntryKeyView(offset), "f");
   EXPECT_EQ(block.GetEntryValueView(offset), "ffval");
 
-  block.RemoveEntry(block.head_entry_, 0);
-  block.RemoveEntry(block.head_entry_, 0);
+  block.RemoveEntry(block.head_entry_, 0, bptree::no_wal_sequence);
+  block.RemoveEntry(block.head_entry_, 0, bptree::no_wal_sequence);
   EXPECT_EQ(block.head_entry_, 0);
   EXPECT_EQ(block.free_list_, 1);
   block.dirty_ = false;

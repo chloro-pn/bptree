@@ -6,43 +6,32 @@
 #include "bptree/cache.h"
 
 TEST(cache, all) {
-  std::vector<uint32_t> load_vec;
+  spdlog::set_level(spdlog::level::debug);
   std::vector<std::pair<uint32_t, uint32_t>> free_vec;
-  bptree::LRUCache<uint32_t, uint32_t> cache(uint32_t(3),
-                                             [&load_vec](const uint32_t& key) -> std::unique_ptr<uint32_t> {
-                                               load_vec.push_back(key);
-                                               return std::unique_ptr<uint32_t>(new uint32_t(key));
-                                             });
+  bptree::LRUCache<uint32_t, uint32_t> cache(uint32_t(3));
 
   cache.SetFreeNotify([&free_vec](const uint32_t& key, const uint32_t& value) -> void {
     free_vec.push_back({key, value});
     return;
   });
   // 0
-  uint32_t v = cache.Get(0).Get();
-  EXPECT_EQ(v, 0);
+  cache.Insert(0, std::unique_ptr<uint32_t>(new uint32_t(0)));
   // 2 -> 0
-  cache.Get(2);
+  cache.Insert(2, std::unique_ptr<uint32_t>(new uint32_t(2)));
   // 4 -> 2 -> 0
-  cache.Get(4);
+  cache.Insert(4, std::unique_ptr<uint32_t>(new uint32_t(4)));
   // 2 -> 4 -> 0
   cache.Get(2);
   // 3 -> 2 -> 4
-  cache.Get(3);
+  cache.Insert(3, std::unique_ptr<uint32_t>(new uint32_t(2)));
   // 5 -> 3 -> 2
-  cache.Get(5);
-  // 2 -> 5 -> 3
-  cache.Get(2);
-  {
-    auto expect = std::vector<uint32_t>{0, 2, 4, 3, 5};
-    EXPECT_EQ(load_vec, expect);
-  }
+  cache.Insert(5, std::unique_ptr<uint32_t>(new uint32_t(5)));
   {
     auto expect = std::vector<std::pair<uint32_t, uint32_t>>{{0, 0}, {4, 4}};
     EXPECT_EQ(free_vec, expect);
   }
   {
-    auto expect = std::list<uint32_t>{2, 5, 3};
+    auto expect = std::list<uint32_t>{5, 3, 2};
     EXPECT_EQ(expect, cache.lru_list_);
   }
 }

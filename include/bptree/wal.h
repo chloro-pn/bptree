@@ -1,11 +1,15 @@
 #pragma once
 
+#include <algorithm>
 #include <cassert>
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "bptree/exception.h"
@@ -14,6 +18,13 @@
 #include "crc/crc32.h"
 
 namespace bptree {
+
+constexpr uint64_t no_wal_sequence = std::numeric_limits<uint64_t>::max();
+
+enum class MsgType : uint8_t {
+  Redo,
+  Undo,
+};
 
 /*
  * 该类的作用是为block_manager提供事务日志的支持，通过将多个block的修改写入同一条wal中，
@@ -29,8 +40,17 @@ class WriteAheadLog {
     // type == 0 事务开始, type == 1 事务结束, type == 2 事务放弃, type == 3 数据日志
     uint8_t type;
     uint64_t sequence;
-    std::string msg;
+    std::string redo_log;
+    std::string undo_log;
+    // 这一项用来区分每条日志的写入先后顺序，undo阶段使用其进行逆序排序
+    uint64_t log_number;
     uint32_t crc;
+
+    LogEntry() = default;
+    LogEntry(const LogEntry&) = default;
+    LogEntry(LogEntry&&) = default;
+    LogEntry& operator=(const LogEntry&) = default;
+    LogEntry& operator=(LogEntry&&) = default;
   };
 
   enum class LogType : uint8_t {
@@ -40,18 +60,16 @@ class WriteAheadLog {
     Data,
   };
 
-  WriteAheadLog(const std::string& file_name, const std::function<void(uint64_t, std::string)>& handler)
-      : next_wal_sequence_(0), file_name_(file_name), f_(nullptr), log_handler_(handler) {
+  WriteAheadLog(const std::string& file_name, const std::function<void(uint64_t, MsgType, std::string)>& handler)
+      : next_wal_sequence_(0), next_log_number_(0), file_name_(file_name), f_(nullptr), log_handler_(handler) {
     if (util::FileNotExist(file_name_)) {
-      f_ = fopen(file_name_.c_str(), "wb+");
+      f_ = util::CreateFile(file_name_);
     } else {
-      f_ = fopen(file_name_.c_str(), "rb+");
+      f_ = util::OpenFile(file_name_);
     }
-    if (f_ == nullptr) {
-      throw BptreeExecption("file " + file_name_ + " open fail");
-    }
-    recover(f_);
   }
+
+  void Recover() { recover(f_); }
 
   ~WriteAheadLog() { Close(); }
 
@@ -67,24 +85,35 @@ class WriteAheadLog {
     return result;
   }
 
-  void WriteLog(uint64_t sequence, const std::string& log, LogType etype = LogType::Data) {
+  void WriteLog(uint64_t sequence, const std::string& redo_log, const std::string& undo_log,
+                LogType etype = LogType::Data) {
+    if (sequence == no_wal_sequence) {
+      return;
+    }
     uint8_t type = logTypeToUint8(etype);
-    uint32_t length = sizeof(sequence) + sizeof(type) + log.size() + sizeof(uint32_t);
+    uint64_t log_number = GetNextLogNum();
+    uint32_t length = sizeof(sequence) + sizeof(type) + redo_log.size() + undo_log.size() + 2 * sizeof(uint32_t) +
+                      sizeof(log_number) + sizeof(uint32_t);
     std::string result;
     result.append((const char*)&length, sizeof(length));
     result.append((const char*)&sequence, sizeof(sequence));
     result.append((const char*)&type, sizeof(type));
-    result.append(log);
+    uint32_t log_length = redo_log.size();
+    result.append((const char*)&log_length, sizeof(log_length));
+    result.append(redo_log);
+    log_length = undo_log.size();
+    result.append((const char*)&log_length, sizeof(log_length));
+    result.append(undo_log);
+    result.append((const char*)&log_number, sizeof(log_number));
     uint32_t crc = crc32(&result[sizeof(length)], result.size() - sizeof(length));
     result.append((const char*)&crc, sizeof(crc));
-    assert(f_ != nullptr);
-    int ret = fwrite(result.data(), result.size(), 1, f_);
-    if (ret != 1) {
-      throw BptreeExecption("wal fwrite error");
-    }
+    util::FileAppend(f_, result.data(), result.size());
   }
 
   void End(uint64_t sequence) {
+    if (sequence == no_wal_sequence) {
+      return;
+    }
     assert(writing_wal_.count(sequence) == 1);
     writing_wal_.erase(sequence);
     WriteEndLog(sequence);
@@ -92,47 +121,63 @@ class WriteAheadLog {
 
  private:
   uint64_t next_wal_sequence_;
+  uint64_t next_log_number_;
   std::string file_name_;
   std::unordered_set<uint64_t> writing_wal_;
-  // 使用者注册本回调函数，当恢复过程中发现某些事务没有被提交，则会将属于该事务的日志按照写入顺序依次调用本回调函数
-  // 使用者应该在日志中记录旧值，使用旧值擦除可能写入or写入一半的新值
-  // 注意，这一操作应该是幂等的，因为这时的wal并不能确定新值是否写入；这一操作并不能依赖修改部分是有意义并完整的，因为
-  // 这时的wal并不能确定新值写入一半时是否发生了掉电故障
-  // 举例，日志中可以记录每个block改动前[offset, size]处的二进制值，回放过程中直接覆盖掉现在的数据即可。
-  std::function<void(uint64_t, const std::string&)> log_handler_;
+  // 使用者注册本回调函数，当恢复过程中首先对checkpoint点后的日志按照写入顺序执行redo操作，然后将所有未提交的事务日志按照
+  // 逆序执行undo操作
+  // 使用者应该在日志中记录新值和旧值
+  // 注意，这一操作应该是幂等的，因为redo和undo日志并不保证只执行一次；这一操作并不能依赖修改部分是有意义并完整的，因为
+  // 之前的写入并不保证时完整的
+  // 举例，日志中可以记录每个block改动前后[offset, size]处的二进制值，回放过程中直接用新值/旧值覆盖掉现在的数据即可。
+  std::function<void(uint64_t, MsgType type, const std::string&)> log_handler_;
   FILE* f_;
+
+  uint64_t GetNextLogNum() {
+    uint64_t result = next_log_number_;
+    next_log_number_ += 1;
+    return result;
+  }
 
   constexpr uint8_t logTypeToUint8(LogType type) const { return static_cast<uint8_t>(type); }
 
   /*
-   * 读取wal文件，恢复next_wal_sequence_，对所有没有结束日志标志的写入日志进行回滚操作，回滚之后在日志中追加abort(sequence)
+   * 读取wal文件，恢复next_wal_sequence_，找到checkpoint点，对其后的日志执行redo操作，然后找到所有未提交的事务日志逆序undo
    */
   void recover(FILE* f) {
     assert(f != nullptr);
-    std::unordered_map<uint64_t, std::vector<std::string>> pending_txs;
+    std::unordered_map<uint64_t, std::vector<LogEntry>> undo_list;
     while (true) {
-      bool eof = false;
+      bool read_error = false;
       bool crc_error = false;
-      LogEntry entry = ReadNextLogFromFile(eof, crc_error);
-      if (eof == true || crc_error == true) {
+      LogEntry entry = ReadNextLogFromFile(read_error, crc_error);
+      if (read_error == true || crc_error == true) {
         break;
       }
-      BPTREE_LOG_DEBUG("read entry from wal, sequence = {}, type = {}, msg = {}", entry.sequence, entry.type, entry.msg);
+      BPTREE_LOG_DEBUG("read entry from wal, sequence = {}, type = {}, redo = {}, undo = {}", entry.sequence,
+                       entry.type, entry.redo_log, entry.undo_log);
       // 更新sequence
       if (next_wal_sequence_ <= entry.sequence) {
         next_wal_sequence_ = entry.sequence + 1;
       }
+      // 更新log_number
+      if (next_log_number_ <= entry.log_number) {
+        next_log_number_ = entry.log_number + 1;
+      }
       if (entry.type == logTypeToUint8(LogType::TxBegin)) {
-        assert(pending_txs.count(entry.sequence) == 0);
-        pending_txs[entry.sequence] = {};
+        assert(undo_list.count(entry.sequence) == 0);
+        undo_list[entry.sequence] = {};
       } else if (entry.type == logTypeToUint8(LogType::TxEnd)) {
-        assert(pending_txs.count(entry.sequence) == 1);
-        pending_txs.erase(entry.sequence);
+        assert(undo_list.count(entry.sequence) == 1);
+        undo_list.erase(entry.sequence);
       } else if (entry.type == logTypeToUint8(LogType::TxAbort)) {
-        // 这个事务内的日志需要回滚
+        // 这个事务内的日志需要回滚，这里我们没有采用《数据库系统概念》一书中的在恢复过程中对
+        // 没有commit的日志写入redo-only的方法，目前复杂度有点高，暂且先不考虑，而是每次都undo abort的日志
       } else if (entry.type == logTypeToUint8(LogType::Data)) {
-        assert(pending_txs.count(entry.sequence) == 1);
-        pending_txs[entry.sequence].push_back(entry.msg);
+        assert(undo_list.count(entry.sequence) == 1);
+        // redo
+        log_handler_(entry.sequence, MsgType::Redo, entry.redo_log);
+        undo_list[entry.sequence].push_back(entry);
       } else {
         // 错误的日志
         BPTREE_LOG_ERROR("wal recover read a wrong type log");
@@ -140,35 +185,38 @@ class WriteAheadLog {
       }
     }
     // 此时，pending_txs记录的都是需要回滚的事务
-    for (auto& each : pending_txs) {
-      uint64_t seq = each.first;
-      for (auto& eachlog : each.second) {
-        log_handler_(seq, eachlog);
+    // undo操作需要逆序执行
+    std::vector<LogEntry> undo_entry;
+    for (auto& each : undo_list) {
+      for (auto& each_entry : each.second) {
+        undo_entry.push_back(std::move(each_entry));
       }
-      BPTREE_LOG_INFO("tx {} rollback complete", seq);
     }
-    BPTREE_LOG_INFO("wal recover complete, next_sequence is {}", next_wal_sequence_);
+    std::sort(undo_entry.begin(), undo_entry.end(),
+              [](const LogEntry& e1, const LogEntry& e2) -> bool { return e1.log_number > e2.log_number; });
+    BPTREE_LOG_INFO("undo log size {}", undo_entry.size());
+    for (auto& each : undo_entry) {
+      log_handler_(each.sequence, MsgType::Undo, each.undo_log);
+    }
+    BPTREE_LOG_INFO("wal recover complete, next_sequence is {}, next_log_number is {}", next_wal_sequence_,
+                    next_log_number_);
+    if (util::FEof(f_) == false) {
+      BPTREE_LOG_WARN("wal recover read error before read eof");
+    }
   }
 
-  LogEntry ReadNextLogFromFile(bool& eof, bool& crc_error) {
+  LogEntry ReadNextLogFromFile(bool& error, bool& crc_error) {
     uint32_t length = 0;
     int ret = fread(&length, sizeof(length), 1, f_);
-    if (feof(f_) != 0) {
-      eof = true;
-      return LogEntry();
-    }
     if (ret != 1) {
-      throw BptreeExecption("wal fread fail");
+      error = true;
+      return LogEntry();
     }
     std::string buf;
     buf.resize(length);
     ret = fread(buf.data(), 1, length, f_);
     if (ret != length) {
-      throw BptreeExecption("wal fread fail");
-    }
-    uint32_t non_msg_length = sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint64_t);
-    if (buf.size() <= non_msg_length) {
-      crc_error = true;
+      error = true;
       return LogEntry();
     }
     LogEntry entry;
@@ -177,18 +225,35 @@ class WriteAheadLog {
     memcpy(&old_crc, &buf[buf.size() - sizeof(uint32_t)], sizeof(uint32_t));
     if (crc != old_crc) {
       crc_error = true;
+      BPTREE_LOG_ERROR("crc check error, {} != {}", crc, old_crc);
       return entry;
     }
     entry.crc = crc;
-    memcpy(&entry.sequence, &buf[0], sizeof(entry.sequence));
-    memcpy(&entry.type, &buf[sizeof(uint64_t)], sizeof(entry.type));
-    entry.msg = std::string(&buf[sizeof(uint64_t) + sizeof(uint8_t)], buf.size() - non_msg_length);
+    size_t offset = 0;
+    memcpy(&entry.sequence, &buf[offset], sizeof(entry.sequence));
+    offset += sizeof(entry.sequence);
+    memcpy(&entry.type, &buf[offset], sizeof(entry.type));
+    offset += sizeof(entry.type);
+    uint32_t log_length = 0;
+    memcpy(&log_length, &buf[offset], sizeof(log_length));
+    offset += sizeof(log_length);
+    entry.redo_log = std::string(&buf[offset], log_length);
+    offset += log_length;
+
+    memcpy(&log_length, &buf[offset], sizeof(log_length));
+    offset += sizeof(log_length);
+    entry.undo_log = std::string(&buf[offset], log_length);
+    offset += log_length;
+
+    memcpy(&entry.log_number, &buf[offset], sizeof(entry.log_number));
+    offset += sizeof(entry.log_number);
+    assert(offset + sizeof(uint32_t) == length);
     return entry;
   }
 
-  void WriteBeginLog(uint64_t sequence) { WriteLog(sequence, "tx begin", LogType::TxBegin); }
+  void WriteBeginLog(uint64_t sequence) { WriteLog(sequence, "tx begin", "", LogType::TxBegin); }
 
-  void WriteEndLog(uint64_t sequence) { WriteLog(sequence, "tx end", LogType::TxEnd); }
+  void WriteEndLog(uint64_t sequence) { WriteLog(sequence, "tx end", "", LogType::TxEnd); }
 
   void Close() {
     if (f_ != nullptr) {

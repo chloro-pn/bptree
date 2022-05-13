@@ -32,7 +32,8 @@ std::vector<Entry> ConstructRandomKv(size_t size, size_t key_size, size_t value_
 }
 
 int main() {
-  BPTREE_LOG_DEBUG("create db : test.db and insert 10w kvs");
+  spdlog::set_level(spdlog::level::debug);
+  BPTREE_LOG_INFO("create db : test.db and insert 10w kvs");
   bptree::BlockManagerOption option;
   option.file_name = "test.db";
   option.create = true;
@@ -93,8 +94,10 @@ int main() {
       return -1;
     }
   }
+
   BPTREE_LOG_INFO("all check succ");
   manager.PrintSuperBlockInfo();
+  manager.PrintRootBlock();
   // std::filesystem::remove(std::filesystem::path("test.db"));
   return 0;
 }

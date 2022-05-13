@@ -20,9 +20,9 @@ cc_binary(
 )
 
 cc_binary(
-  name = "wal",
-  srcs = ["example/wal.cc"],
-  deps = [":bptree"],
+  name = "paritalwrite",
+  srcs = ["example/partial_write.cc"],
+  deps = ["bptree"],
 )
 
 cc_binary(

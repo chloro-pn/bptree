@@ -1,7 +1,7 @@
 todo:
 * 完善单元测试 [doing]
 * 完善错误处理
-* block的crc校验和lru cache策略，是上条的基础 [done]
+* block的crc校验和lru cache策略，是上条的基础 [done] [update 重构了cache接口，便于recover流程处理]
 * 记录统计信息和日志
 * 提供迭代器 [delete]
 * 重构page磁盘管理 （目前的这种位图形式还是不太行，消耗空间太大）[done]
@@ -10,4 +10,5 @@ todo:
 * cache希望block的析构函数中进行资源释放（调用manager进行刷盘），但是需要在析构函数中调用虚函数，因此需要修改cache，提供destructor前注册机制 [done]
 * cache目前的实现有bug，Block生命周期管理不明确，需要修改接口 [done]
 * 基于WAL的崩溃恢复机制 [doing]
+* double write机制 [done]
 * b+树并发控制
