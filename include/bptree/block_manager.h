@@ -16,6 +16,7 @@
 #include "bptree/exception.h"
 #include "bptree/fault_injection.h"
 #include "bptree/log.h"
+#include "bptree/metric/metric.h"
 #include "bptree/util.h"
 #include "bptree/wal.h"
 
@@ -68,7 +69,6 @@ class BlockManager {
       }
       // 新建的b+树，初始化super block和其他信息即可
       super_block_.root_index_ = 1;
-      // super block
       super_block_.free_block_head_ = 0;
       super_block_.current_max_block_index_ = 1;
       f_ = util::CreateFile(file_name_);
@@ -127,9 +127,11 @@ class BlockManager {
       throw BptreeExecption("wrong key length");
     }
     auto location = GetBlock(super_block_.root_index_).Get().GetBlockIndexContainKey(key);
+    BPTREE_LOG_DEBUG("get range, key == {}, find the location : {}, {}", key, location.first, location.second);
     if (location.first == 0) {
       return {};
     }
+    Counter counter("get_range_count");
     std::vector<std::pair<std::string, std::string>> result;
     uint32_t block_index = location.first;
     uint32_t view_index = location.second;
@@ -149,7 +151,9 @@ class BlockManager {
       // 下一个block
       block_index = block.Get().GetNext();
       view_index = 0;
+      counter.UpdateValue(1);
     }
+    BPTREE_LOG_DEBUG("get range, key == {}, scans {} blocks", key, counter.GetValue());
     return result;
   }
 
@@ -185,6 +189,7 @@ class BlockManager {
       old_root.Get().SetHeight(old_root_height + 1, sequence);
       old_root.Get().InsertKv(left_block.Get().GetMaxKey(), ConstructIndexByNum(new_blocks.first), sequence);
       old_root.Get().InsertKv(right_block.Get().GetMaxKey(), ConstructIndexByNum(new_blocks.second), sequence);
+      BPTREE_LOG_DEBUG("the insert operation(key = {}, value = {}) caused the root block to split", key, value);
     }
     wal_.End(sequence);
     return;
@@ -266,6 +271,7 @@ class BlockManager {
         throw BptreeExecption("block broken, insert nth kv : ", std::to_string(i));
       }
     }
+    BPTREE_LOG_DEBUG("block split, from {} to {} and {}", block->GetIndex(), new_block_1_index, new_block_2_index);
     return {new_block_1_index, new_block_2_index};
   }
 
@@ -284,6 +290,7 @@ class BlockManager {
         throw BptreeExecption("block broken");
       }
     }
+    BPTREE_LOG_DEBUG("block merge, from {} and {} to {}", b1->GetIndex(), b2->GetIndex(), new_block_index);
     return new_block_index;
   }
 
@@ -335,6 +342,7 @@ class BlockManager {
     auto new_block =
         std::unique_ptr<Block>(new Block(*this, result, height, super_block_.key_size_, super_block_.value_size_));
     block_cache_.Insert(result, std::move(new_block));
+    BPTREE_LOG_DEBUG("alloc new block {}", result);
     return result;
   }
 
@@ -362,6 +370,7 @@ class BlockManager {
     std::string redo_log = CreateDeallocBlockWalLog(index);
     std::string undo_log = "";
     wal_.WriteLog(sequence, redo_log, undo_log);
+    BPTREE_LOG_DEBUG("dealloc block {}", index);
   }
 
   void ReadBlockFromFile(BlockBase* block, uint32_t index) {
@@ -458,9 +467,11 @@ class BlockManager {
         throw BptreeExecption("inner error, can't recover block from double_write file : " + std::to_string(index));
       }
     }
+    BPTREE_LOG_DEBUG("load block {} from disk succ", index);
     return new_block;
   }
 
+  // todo 重构
   void HandleWal(uint64_t sequence, MsgType type, const std::string& log) {
     uint8_t wal_type = 0;
     // 五种类型的日志：

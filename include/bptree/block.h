@@ -157,6 +157,7 @@ class BlockBase {
       return false;
     }
     dirty_ = false;
+    BPTREE_LOG_DEBUG("block {} parse succ", index_);
     return true;
   }
 
@@ -173,6 +174,7 @@ class BlockBase {
     crc_ = crc32((const char*)&buf_[sizeof(crc_)], block_size - sizeof(crc_));
     AppendToBuf(buf_, crc_, 0);
     dirty_ = false;
+    BPTREE_LOG_DEBUG("block {} flush succ", index_);
     return true;
   }
 

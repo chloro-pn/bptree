@@ -15,6 +15,7 @@
 namespace bptree {
 
 void Block::SetNextFreeIndex(uint32_t nfi, uint64_t sequence) noexcept {
+  BPTREE_LOG_DEBUG("block {} set next free index from {} to {}", GetIndex(), next_free_index_, nfi);
   std::string redo_log = CreateMetaChangeWalLog("next_free_index", nfi);
   std::string undo_log = CreateMetaChangeWalLog("next_free_index", next_free_index_);
   manager_.wal_.WriteLog(sequence, redo_log, undo_log);
@@ -265,6 +266,7 @@ void Block::Print() {
 }
 
 void Block::SetPrev(uint32_t prev, uint64_t sequence) noexcept {
+  BPTREE_LOG_DEBUG("block {} set prev from {} to {}", GetIndex(), prev_, prev);
   std::string redo_log = CreateMetaChangeWalLog("prev", prev);
   std::string undo_log = CreateMetaChangeWalLog("prev", prev_);
   manager_.wal_.WriteLog(sequence, redo_log, undo_log);
@@ -273,6 +275,7 @@ void Block::SetPrev(uint32_t prev, uint64_t sequence) noexcept {
 }
 
 void Block::SetNext(uint32_t next, uint64_t sequence) noexcept {
+  BPTREE_LOG_DEBUG("block {} set next from {} to {}", GetIndex(), next_, next);
   std::string redo_log = CreateMetaChangeWalLog("next", next);
   std::string undo_log = CreateMetaChangeWalLog("next", next_);
   manager_.wal_.WriteLog(sequence, redo_log, undo_log);
@@ -281,6 +284,7 @@ void Block::SetNext(uint32_t next, uint64_t sequence) noexcept {
 }
 
 void Block::SetHeight(uint32_t height, uint64_t sequence) noexcept {
+  BPTREE_LOG_DEBUG("block {} set height from {} to {}", GetIndex(), getHeight(), height);
   std::string redo_log = CreateMetaChangeWalLog("height", height);
   std::string undo_log = CreateMetaChangeWalLog("height", GetHeight());
   manager_.wal_.WriteLog(sequence, redo_log, undo_log);
@@ -289,6 +293,7 @@ void Block::SetHeight(uint32_t height, uint64_t sequence) noexcept {
 }
 
 void Block::SetHeadEntry(uint32_t entry, uint64_t sequence) noexcept {
+  BPTREE_LOG_DEBUG("block {} set head entry from {} to {}", GetIndex(), head_entry_, entry);
   std::string redo_log = CreateMetaChangeWalLog("head_entry", entry);
   std::string undo_log = CreateMetaChangeWalLog("head_entry", head_entry_);
   manager_.wal_.WriteLog(sequence, redo_log, undo_log);
@@ -297,6 +302,7 @@ void Block::SetHeadEntry(uint32_t entry, uint64_t sequence) noexcept {
 }
 
 void Block::SetFreeList(uint32_t free_list, uint64_t sequence) noexcept {
+  BPTREE_LOG_DEBUG("block {} set free_list from {} to {}", GetIndex(), free_list_, free_list);
   std::string redo_log = CreateMetaChangeWalLog("free_list", free_list);
   std::string undo_log = CreateMetaChangeWalLog("free_list", free_list_);
   manager_.wal_.WriteLog(sequence, redo_log, undo_log);
@@ -305,6 +311,7 @@ void Block::SetFreeList(uint32_t free_list, uint64_t sequence) noexcept {
 }
 
 void Block::MoveFirstElementTo(Block* other, uint64_t sequence) {
+  BPTREE_LOG_DEBUG("block {} move first element to {}", GetIndex(), other->GetIndex());
   assert(kv_view_.empty() == false);
   uint32_t move_index = kv_view_[0].index;
   other->InsertKv(kv_view_[0].key_view, kv_view_[0].value_view, sequence);
@@ -313,6 +320,7 @@ void Block::MoveFirstElementTo(Block* other, uint64_t sequence) {
 }
 
 void Block::MoveLastElementTo(Block* other, uint64_t sequence) {
+  BPTREE_LOG_DEBUG("block {} move last element to {}", GetIndex(), other->GetIndex());
   assert(kv_view_.empty() == false);
   uint32_t size = kv_view_.size();
   uint32_t move_index = kv_view_.back().index;
@@ -505,6 +513,7 @@ std::string_view Block::SetEntryValue(uint32_t offset, const std::string& value,
  */
 
 void SuperBlock::SetCurrentMaxBlockIndex(uint32_t value, uint64_t sequence) {
+  BPTREE_LOG_DEBUG("super block set current_max_block_index from {} to {}", current_max_block_index_, value);
   std::string redo_log = CreateMetaChangeWalLog("current_max_block_index", value);
   std::string undo_log = CreateMetaChangeWalLog("current_max_block_index", current_max_block_index_);
   current_max_block_index_ = value;
@@ -512,6 +521,7 @@ void SuperBlock::SetCurrentMaxBlockIndex(uint32_t value, uint64_t sequence) {
 }
 
 void SuperBlock::SetFreeBlockHead(uint32_t value, uint64_t sequence) {
+  BPTREE_LOG_DEBUG("super block set free_block_head from {} to {}", free_block_head_, value);
   std::string redo_log = CreateMetaChangeWalLog("free_block_head", value);
   std::string undo_log = CreateMetaChangeWalLog("free_block_head", free_block_head_);
   free_block_head_ = value;
@@ -519,6 +529,7 @@ void SuperBlock::SetFreeBlockHead(uint32_t value, uint64_t sequence) {
 }
 
 void SuperBlock::SetFreeBlockSize(uint32_t value, uint64_t sequence) {
+  BPTREE_LOG_DEBUG("super block set free block size from {} to {}", free_block_size_, value);
   std::string redo_log = CreateMetaChangeWalLog("free_block_size", value);
   std::string undo_log = CreateMetaChangeWalLog("free_block_size", free_block_size_);
   free_block_size_ = value;
