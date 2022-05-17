@@ -225,7 +225,6 @@ class BlockManager {
       throw BptreeExecption("request block's index invalid : ", std::to_string(index));
     }
     auto block = GetBlock(index);
-    block.Get().UpdateKvViewByBuf();
     block.Get().Print();
   }
 
