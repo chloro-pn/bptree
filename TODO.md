@@ -13,3 +13,4 @@ todo:
 * double write机制 [done]
 * b+树并发控制 [无期限延迟]
 * 日志缓冲区、checkpoint、lsn [todo]
+* 恢复机制相关的代码重构和优化 [doing]
