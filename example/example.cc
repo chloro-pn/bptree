@@ -32,7 +32,7 @@ std::vector<Entry> ConstructRandomKv(size_t size, size_t key_size, size_t value_
 }
 
 int main() {
-  spdlog::set_level(spdlog::level::debug);
+  //spdlog::set_level(spdlog::level::debug);
   BPTREE_LOG_INFO("create db : test.db and insert 10w kvs");
   bptree::BlockManagerOption option;
   option.file_name = "test.db";

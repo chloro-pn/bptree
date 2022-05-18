@@ -15,7 +15,7 @@ bptree是一个持久化到磁盘的b+树实现
 目前正在实现的特性有：
 * 完善单元测试 [doing]
 * 实现监控和统计模块，增强bptree的可观测性 [doing]
-* check point [todo]
+* check point [doing]
 * 日志缓冲区 [todo]
 * 并发控制 [todo]
 

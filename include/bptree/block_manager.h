@@ -17,6 +17,7 @@
 #include "bptree/fault_injection.h"
 #include "bptree/log.h"
 #include "bptree/metric/metric.h"
+#include "bptree/metric/metric_set.h"
 #include "bptree/util.h"
 #include "bptree/wal.h"
 
@@ -58,6 +59,7 @@ class BlockManager {
         BPTREE_LOG_DEBUG("block {} don't flush to disk, clean");
       }
     });
+    RegisterMetrics();
     if (util::FileNotExist(file_name_)) {
       if (option.create == false) {
         throw BptreeExecption("file ", file_name_, " not exist");
@@ -75,6 +77,8 @@ class BlockManager {
       auto root_block = std::unique_ptr<Block>(
           new Block(*this, super_block_.root_index_, 1, super_block_.key_size_, super_block_.value_size_));
       block_cache_.Insert(super_block_.root_index_, std::move(root_block));
+
+      FlushSuperBlockToFile(f_);
 
       uint64_t seq = wal_.Begin();
       std::string redo_log =
@@ -115,6 +119,7 @@ class BlockManager {
     if (key.size() != super_block_.key_size_) {
       throw BptreeExecption("wrong key length");
     }
+    GetMetricSet().GetAs<Counter>("read_total_count")->Add();
     auto block = GetBlock(super_block_.root_index_);
     std::string result = block.Get().Get(key);
     return result;
@@ -126,6 +131,7 @@ class BlockManager {
     if (key.size() != super_block_.key_size_) {
       throw BptreeExecption("wrong key length");
     }
+    GetMetricSet().GetAs<Counter>("read_total_count")->Add();
     auto location = GetBlock(super_block_.root_index_).Get().GetBlockIndexContainKey(key);
     BPTREE_LOG_DEBUG("get range, key == {}, find the location : {}, {}", key, location.first, location.second);
     if (location.first == 0) {
@@ -151,7 +157,7 @@ class BlockManager {
       // 下一个block
       block_index = block.Get().GetNext();
       view_index = 0;
-      counter.UpdateValue(1);
+      counter.Add();
     }
     BPTREE_LOG_DEBUG("get range, key == {}, scans {} blocks", key, counter.GetValue());
     return result;
@@ -164,6 +170,7 @@ class BlockManager {
     if (key.size() != super_block_.key_size_ || value.size() != super_block_.value_size_) {
       throw BptreeExecption("wrong kv length");
     }
+    GetMetricSet().GetAs<Counter>("tx_total_count")->Add();
     uint64_t sequence = wal_.Begin();
     InsertInfo info = GetBlock(super_block_.root_index_).Get().Insert(key, value, sequence);
     if (info.state_ == InsertInfo::State::Split) {
@@ -192,18 +199,20 @@ class BlockManager {
       BPTREE_LOG_DEBUG("the insert operation(key = {}, value = {}) caused the root block to split", key, value);
     }
     wal_.End(sequence);
-    return;
+    AfterCommitTx();
   }
 
   // 删除
   void Delete(const std::string& key) {
-    uint64_t sequence = wal_.Begin();
     if (key.size() != super_block_.key_size_) {
       throw BptreeExecption("wrong key length");
     }
+    GetMetricSet().GetAs<Counter>("tx_total_count")->Add();
+    uint64_t sequence = wal_.Begin();
     // 根节点的merge信息不处理
     GetBlock(super_block_.root_index_).Get().Delete(key, sequence);
     wal_.End(sequence);
+    AfterCommitTx();
   }
 
   // 更新，如果key不在db中，直接返回，否则会将对应的value在内存中的缓存传递给updator，由update执行更新，bptree负责将数据重新刷回硬盘
@@ -249,6 +258,8 @@ class BlockManager {
   FaultInjection& GetFaultInjection() { return fj_; }
 
   WriteAheadLog& GetWal() { return wal_; }
+
+  MetricSet& GetMetricSet() { return metric_set_; }
 
  private:
   std::pair<uint32_t, uint32_t> BlockSplit(const Block* block, uint64_t sequence) {
@@ -388,6 +399,8 @@ class BlockManager {
     fclose(f_);
     dw_.Close();
     f_ = nullptr;
+    // 正常关闭的情况下执行到这里，所有block都刷到了磁盘，所以可以安全的删除wal日志
+    wal_.ResetLogFile();
   }
 
   /*
@@ -587,6 +600,52 @@ class BlockManager {
     wrapper.Get().HandleDataUpdateWal(offset, region);
   }
 
+  // 每隔一段时间，刷新cache中的部分脏页到磁盘，必要的时候创建快照
+  void AfterCommitTx() {
+    uint64_t tx_count = GetMetricSet().GetAs<Counter>("tx_total_count")->GetValue();
+    if (tx_count % 128 == 0) {
+      double dirty_block_count = GetMetricSet().GetAs<Gauge>("dirty_block_count")->GetValue();
+      size_t total_block_count = block_cache_.GetEntrySize();
+      double rate = dirty_block_count / total_block_count;
+      if (rate >= 0.75) {
+        // todo, 将部分脏页刷盘，按照lru列表中的倒序顺序进行，因为排到后面的页面有更大的可能不被使用
+      }
+    }
+  }
+
+  // 为当前存储内容创建一个快照，注意：不能有未完成的事务，原因：创建完快照后之前的日志全部删除，
+  // 此时如果有执行到一半的事务，则快照点前的部分的日志已经消失，但是事务不确定是提交的，如果之后由于故障导致事务回滚，则会导致快照点之前的日志丢失而无法回滚
+  // 1. 将所有cache中的block刷回磁盘(但是并不从cache中delete)
+  // 2. 调用wal_.ResetLogFile()函数
+  void CreateCheckPoint() {
+    BPTREE_LOG_INFO("create check point");
+    FlushSuperBlockToFile(f_);
+    Counter flush_block_count("flush_block_count");
+    block_cache_.ForeachValueInCache([this, &flush_block_count](const uint32_t& key, Block& block) {
+      bool dirty = block.Flush();
+      if (dirty == true) {
+        flush_block_count.Add();
+        BPTREE_LOG_DEBUG("block {} flush to disk, dirty", key);
+        this->dw_.WriteBlock(&block);
+        this->FlushBlockToFile(this->f_, block.GetIndex(), &block);
+      } else {
+        BPTREE_LOG_DEBUG("block {} don't flush to disk, clean");
+      }
+    });
+    BPTREE_LOG_INFO("create check point : flush {} blocks to disk", flush_block_count.GetValue());
+    // 此时所有修改操作都已经刷入磁盘，可以安全的删除wal日志
+    wal_.ResetLogFile();
+  }
+
+  void RegisterMetrics() {
+    // 运行开始时到现在启动的事务总数量
+    metric_set_.CreateMetric<Counter>("tx_total_count");
+    // 运行开始时到现在get和get_range调用的总数量
+    metric_set_.CreateMetric<Counter>("read_total_count");
+    // cache中脏页的数量
+    metric_set_.CreateMetric<Gauge>("dirty_block_count");
+  }
+
  private:
   LRUCache<uint32_t, Block> block_cache_;
   std::string file_name_;
@@ -595,5 +654,7 @@ class BlockManager {
   WriteAheadLog wal_;
   DoubleWrite dw_;
   FaultInjection fj_;
+  // 记录运行过程中各项指标信息
+  MetricSet metric_set_;
 };
 }  // namespace bptree

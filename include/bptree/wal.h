@@ -119,6 +119,14 @@ class WriteAheadLog {
     WriteEndLog(sequence);
   }
 
+  // 调用方首先保证所有写入wal的日志对应的操作都已经写入磁盘，然后调用本函数
+  // 本函数会清空之前写入的所有wal日志，每次调用本函数可视为提交了一条check point日志
+  // 作用：防止wal日志无限增加，占用过多存储空间，并且恢复时间也很长
+  void ResetLogFile() {
+    util::DeleteFile(file_name_);
+    f_ = util::CreateFile(file_name_);
+  }
+
  private:
   uint64_t next_wal_sequence_;
   uint64_t next_log_number_;

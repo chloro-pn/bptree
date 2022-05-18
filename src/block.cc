@@ -14,12 +14,38 @@
 
 namespace bptree {
 
+bool BlockBase::Flush() noexcept {
+  if (dirty_ == false) {
+    return false;
+  }
+  uint32_t offset = 0;
+  offset = AppendToBuf(buf_, crc_, offset);
+  offset = AppendToBuf(buf_, index_, offset);
+  offset = AppendToBuf(buf_, height_, offset);
+  FlushToBuf(offset);
+  // calculate crc and update.
+  crc_ = crc32((const char*)&buf_[sizeof(crc_)], block_size - sizeof(crc_));
+  AppendToBuf(buf_, crc_, 0);
+  dirty_ = false;
+  manager_.GetMetricSet().GetAs<Gauge>("dirty_block_count")->Sub();
+  BPTREE_LOG_DEBUG("block {} flush succ", index_);
+  return true;
+}
+
+void BlockBase::SetDirty() { 
+  if (dirty_ == true) {
+    return;
+  }
+  manager_.GetMetricSet().GetAs<Gauge>("dirty_block_count")->Add();
+  dirty_ = true;
+}
+
 void Block::SetNextFreeIndex(uint32_t nfi, uint64_t sequence) noexcept {
   BPTREE_LOG_DEBUG("block {} set next free index from {} to {}", GetIndex(), next_free_index_, nfi);
   std::string redo_log = CreateMetaChangeWalLog("next_free_index", nfi);
   std::string undo_log = CreateMetaChangeWalLog("next_free_index", next_free_index_);
   manager_.wal_.WriteLog(sequence, redo_log, undo_log);
-  dirty_ = true;
+  SetDirty();
   next_free_index_ = nfi;
 }
 
@@ -271,7 +297,7 @@ void Block::SetPrev(uint32_t prev, uint64_t sequence) noexcept {
   std::string undo_log = CreateMetaChangeWalLog("prev", prev_);
   manager_.wal_.WriteLog(sequence, redo_log, undo_log);
   prev_ = prev;
-  dirty_ = true;
+  SetDirty();
 }
 
 void Block::SetNext(uint32_t next, uint64_t sequence) noexcept {
@@ -280,7 +306,7 @@ void Block::SetNext(uint32_t next, uint64_t sequence) noexcept {
   std::string undo_log = CreateMetaChangeWalLog("next", next_);
   manager_.wal_.WriteLog(sequence, redo_log, undo_log);
   next_ = next;
-  dirty_ = true;
+  SetDirty();
 }
 
 void Block::SetHeight(uint32_t height, uint64_t sequence) noexcept {
@@ -288,7 +314,7 @@ void Block::SetHeight(uint32_t height, uint64_t sequence) noexcept {
   std::string redo_log = CreateMetaChangeWalLog("height", height);
   std::string undo_log = CreateMetaChangeWalLog("height", GetHeight());
   manager_.wal_.WriteLog(sequence, redo_log, undo_log);
-  dirty_ = true;
+  SetDirty();
   getHeight() = height;
 }
 
@@ -298,7 +324,7 @@ void Block::SetHeadEntry(uint32_t entry, uint64_t sequence) noexcept {
   std::string undo_log = CreateMetaChangeWalLog("head_entry", head_entry_);
   manager_.wal_.WriteLog(sequence, redo_log, undo_log);
   head_entry_ = entry;
-  dirty_ = true;
+  SetDirty();
 }
 
 void Block::SetFreeList(uint32_t free_list, uint64_t sequence) noexcept {
@@ -307,7 +333,7 @@ void Block::SetFreeList(uint32_t free_list, uint64_t sequence) noexcept {
   std::string undo_log = CreateMetaChangeWalLog("free_list", free_list_);
   manager_.wal_.WriteLog(sequence, redo_log, undo_log);
   free_list_ = free_list;
-  dirty_ = true;
+  SetDirty();
 }
 
 void Block::MoveFirstElementTo(Block* other, uint64_t sequence) {
@@ -449,7 +475,7 @@ DeleteInfo Block::DoMerge(uint32_t child_index, uint64_t sequence) {
 }
 
 void Block::HandleMetaUpdateWal(const std::string& meta_name, uint32_t value) {
-  dirty_ = true;
+  SetDirty();
   if (meta_name == "height") {
     getHeight() = value;
   } else if (meta_name == "head_entry") {
@@ -468,13 +494,13 @@ void Block::HandleMetaUpdateWal(const std::string& meta_name, uint32_t value) {
 }
 
 void Block::HandleDataUpdateWal(uint32_t offset, const std::string& region) {
-  dirty_ = true;
+  SetDirty();
   assert(offset + region.size() <= block_size);
   memcpy(&GetBuf()[offset], region.data(), region.size());
 }
 
 void Block::SetEntryNext(uint32_t index, uint32_t next, uint64_t sequence) noexcept {
-  dirty_ = true;
+  SetDirty();
   uint32_t offset = GetOffsetByEntryIndex(index);
   assert(offset + sizeof(next) <= block_size);
   std::string redo_log((const char*)&next, sizeof(next));
@@ -484,7 +510,7 @@ void Block::SetEntryNext(uint32_t index, uint32_t next, uint64_t sequence) noexc
 }
 
 std::string_view Block::SetEntryKey(uint32_t offset, const std::string& key, uint64_t sequence) noexcept {
-  dirty_ = true;
+  SetDirty();
   assert(key.size() == key_size_);
   uint32_t key_offset = offset + sizeof(uint32_t);
   std::string undo_log((const char*)&buf_[key_offset], key_size_);
@@ -496,7 +522,7 @@ std::string_view Block::SetEntryKey(uint32_t offset, const std::string& key, uin
 }
 
 std::string_view Block::SetEntryValue(uint32_t offset, const std::string& value, uint64_t sequence) noexcept {
-  dirty_ = true;
+  SetDirty();
   assert(value.size() == value_size_);
   uint32_t value_offset = offset + sizeof(uint32_t) + key_size_;
   std::string undo_log((const char*)&buf_[value_offset], value_size_);

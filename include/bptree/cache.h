@@ -200,6 +200,10 @@ class LRUCache {
     return in_use_.empty();
   }
 
+  size_t GetEntrySize() const {
+    return cache_.size();
+  }
+
  private:
   std::unordered_map<Key, Entry> cache_;
   std::list<Key> lru_list_;

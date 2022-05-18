@@ -140,10 +140,10 @@ struct DeleteInfo {
 
 class BlockBase {
  public:
-  BlockBase() noexcept : crc_(0), index_(0), height_(0), buf_init_(false), dirty_(true) {}
+  BlockBase(BlockManager& manager) noexcept : manager_(manager), crc_(0), index_(0), height_(0), buf_init_(false), dirty_(true) {}
 
-  BlockBase(uint32_t index, uint32_t height) noexcept
-      : crc_(0), index_(index), height_(height), buf_init_(false), dirty_(false) {}
+  BlockBase(BlockManager& manager, uint32_t index, uint32_t height) noexcept
+      : manager_(manager), crc_(0), index_(index), height_(height), buf_init_(false), dirty_(false) {}
 
   // 在从文件中读取数据到buf后进行parse，如果crc32校验失败返回false，否则返回true
   bool Parse() noexcept {
@@ -161,22 +161,7 @@ class BlockBase {
     return true;
   }
 
-  bool Flush() noexcept {
-    if (dirty_ == false) {
-      return false;
-    }
-    uint32_t offset = 0;
-    offset = AppendToBuf(buf_, crc_, offset);
-    offset = AppendToBuf(buf_, index_, offset);
-    offset = AppendToBuf(buf_, height_, offset);
-    FlushToBuf(offset);
-    // calculate crc and update.
-    crc_ = crc32((const char*)&buf_[sizeof(crc_)], block_size - sizeof(crc_));
-    AppendToBuf(buf_, crc_, 0);
-    dirty_ = false;
-    BPTREE_LOG_DEBUG("block {} flush succ", index_);
-    return true;
-  }
+  bool Flush() noexcept;
 
   uint32_t GetUsedSpace() const noexcept { return sizeof(crc_) + sizeof(index_) + sizeof(height_); }
 
@@ -203,7 +188,7 @@ class BlockBase {
 
   char* GetBuf() noexcept { return buf_; }
 
-  void SetDirty() { dirty_ = true; }
+  void SetDirty();
 
   virtual ~BlockBase() {
     if (dirty_ == true) {
@@ -213,6 +198,7 @@ class BlockBase {
   }
 
  protected:
+  BlockManager& manager_;
   char buf_[block_size];
   bool dirty_;
 
@@ -233,8 +219,7 @@ class Block : public BlockBase {
  public:
   // 新建的block构造函数
   Block(BlockManager& manager, uint32_t index, uint32_t height, uint32_t key_size, uint32_t value_size) noexcept
-      : BlockBase(index, height),
-        manager_(manager),
+      : BlockBase(manager, index, height),
         next_free_index_(not_free_flag),
         prev_(0),
         next_(0),
@@ -249,7 +234,7 @@ class Block : public BlockBase {
   }
 
   // 从文件中读取
-  explicit Block(BlockManager& manager) noexcept : BlockBase(), manager_(manager) {}
+  explicit Block(BlockManager& manager) noexcept : BlockBase(manager) {}
 
   Block(const Block&) = delete;
   Block(Block&&) = delete;
@@ -266,7 +251,7 @@ class Block : public BlockBase {
   void SetNextFreeIndex(uint32_t nfi, uint64_t sequence) noexcept;
 
   // tested
-  std::string GetMaxKey() const noexcept {
+  std::string GetMaxKey() const {
     if (kv_view_.empty() == true) {
       throw BptreeExecption("get max key from empty block ", std::to_string(GetIndex()));
     }
@@ -367,7 +352,6 @@ class Block : public BlockBase {
   }
 
  private:
-  BlockManager& manager_;
   uint32_t next_free_index_;
   uint32_t prev_;
   uint32_t next_;
@@ -447,7 +431,7 @@ class Block : public BlockBase {
 
   // tested
   void RemoveEntry(uint32_t index, uint32_t prev_index, uint64_t sequence) noexcept {
-    dirty_ = true;
+    SetDirty();
     uint32_t offset = GetOffsetByEntryIndex(index);
     uint32_t next = GetEntryNext(offset);
     if (prev_index != 0) {
@@ -469,7 +453,7 @@ class Block : public BlockBase {
       full = true;
       return Entry();
     }
-    dirty_ = true;
+    SetDirty();
     uint32_t new_index = free_list_;
     uint32_t new_offset = GetOffsetByEntryIndex(free_list_);
     SetFreeList(GetEntryNext(new_offset), sequence);
@@ -586,15 +570,14 @@ class SuperBlock : public BlockBase {
  public:
   friend class BlockManager;
   SuperBlock(BlockManager& manager, uint32_t key_size, uint32_t value_size) noexcept
-      : BlockBase(0, super_height),
-        manager_(manager),
+      : BlockBase(manager, 0, super_height),
         root_index_(0),
         key_size_(key_size),
         value_size_(value_size),
         free_block_head_(0),
         free_block_size_(0),
         current_max_block_index_(1) {
-    dirty_ = true;
+
   }
 
   void FlushToBuf(size_t offset) noexcept override {
@@ -647,7 +630,6 @@ class SuperBlock : public BlockBase {
     }
   }
 
-  BlockManager& manager_;
   uint32_t root_index_;
   uint32_t key_size_;
   uint32_t value_size_;
