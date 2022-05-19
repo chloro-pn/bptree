@@ -27,7 +27,7 @@ git clone下载项目，并在根目录执行bazel build ...即可
 bazel test ...
 
 ## example ##
-参考目录example下的example.cc文件，随机生成100000个kv项并插入bptree，然后随机删除其中10000项，最后对比bptree中存储的数据与生成的数据是否一致。
+参考目录example下的example.cc文件，随机生成10w个kv项并插入bptree，然后随机删除其中1w项，最后对比bptree中存储的数据与生成的数据是否一致。
 
 执行结果参考如下:
 ```

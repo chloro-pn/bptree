@@ -1,7 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <source_location>
 #include <string>
+
+#include "bptree/log.h"
 
 namespace bptree {
 
@@ -11,11 +14,14 @@ class Metric {
 
   const std::string& GetMetricName() const { return metric_name_; }
 
-  virtual void Clear() {
-    value_ = 0.0;
-  }
+  virtual void Clear() { value_ = 0.0; }
 
   const double& GetValue() const { return value_; }
+
+  void PrintToLog(const std::source_location location = std::source_location::current()) {
+    BPTREE_LOG_DEBUG("metric name : {}, value : {}, file name : {}, line : {}, function name : {}", metric_name_,
+                     value_, location.file_name(), location.line(), location.function_name());
+  }
 
   virtual ~Metric() {}
 

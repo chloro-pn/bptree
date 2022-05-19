@@ -98,6 +98,8 @@ int main() {
   BPTREE_LOG_INFO("all check succ");
   manager.PrintSuperBlockInfo();
   manager.PrintRootBlock();
+
+  manager.GetFaultInjection().RegisterTheLastWalWriteFailCondition([]() -> bool { return true; });
   // std::filesystem::remove(std::filesystem::path("test.db"));
   return 0;
 }

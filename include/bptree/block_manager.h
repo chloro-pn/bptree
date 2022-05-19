@@ -56,7 +56,7 @@ class BlockManager {
         this->dw_.WriteBlock(&value);
         this->FlushBlockToFile(this->f_, value.GetIndex(), &value);
       } else {
-        BPTREE_LOG_DEBUG("block {} don't flush to disk, clean");
+        BPTREE_LOG_DEBUG("block {} don't flush to disk, clean", key);
       }
     });
     RegisterMetrics();
@@ -223,6 +223,7 @@ class BlockManager {
     }
     bool succ = GetBlock(super_block_.root_index_).Get().Update(key, updator, sequence);
     wal_.End(sequence);
+    AfterCommitTx();
     return succ;
   }
 
@@ -399,6 +400,11 @@ class BlockManager {
     fclose(f_);
     dw_.Close();
     f_ = nullptr;
+    auto& cond = GetFaultInjection().GetTheLastCheckPointFailCondition();
+    if (cond && cond() == true) {
+      BPTREE_LOG_WARN("fault injection : the last check point fail");
+      std::exit(-1);
+    }
     // 正常关闭的情况下执行到这里，所有block都刷到了磁盘，所以可以安全的删除wal日志
     wal_.ResetLogFile();
   }
@@ -581,7 +587,7 @@ class BlockManager {
   void HandleBlockMetaUpdateWal(uint64_t sequence, uint32_t index, const std::string& name, uint32_t value) {
     auto wrapper = block_cache_.Get(index);
     if (wrapper.Exist() == false) {
-      BPTREE_LOG_INFO("block meta update load block {}", index);
+      BPTREE_LOG_DEBUG("block meta update load block {}", index);
       auto block = LoadBlock(index, true);
       block_cache_.Insert(index, std::move(block));
       wrapper = block_cache_.Get(index);
@@ -592,7 +598,7 @@ class BlockManager {
   void HandleBlockDataUpdateWal(uint64_t sequence, uint32_t index, uint32_t offset, const std::string& region) {
     auto wrapper = block_cache_.Get(index);
     if (wrapper.Exist() == false) {
-      BPTREE_LOG_INFO("block data update load block {}", index);
+      BPTREE_LOG_DEBUG("block data update load block {}", index);
       auto block = LoadBlock(index, true);
       block_cache_.Insert(index, std::move(block));
       wrapper = block_cache_.Get(index);
@@ -603,13 +609,38 @@ class BlockManager {
   // 每隔一段时间，刷新cache中的部分脏页到磁盘，必要的时候创建快照
   void AfterCommitTx() {
     uint64_t tx_count = GetMetricSet().GetAs<Counter>("tx_total_count")->GetValue();
-    if (tx_count % 128 == 0) {
+    size_t total_block_count = block_cache_.GetEntrySize();
+    // 如果cache中block的数量本来就很小，则不进行刷盘处理
+    bool too_small = total_block_count <= block_cache_.GetCapacity() * 0.2;
+    if (tx_count % 128 == 0 && tx_count % 2048 != 0 && !too_small) {
       double dirty_block_count = GetMetricSet().GetAs<Gauge>("dirty_block_count")->GetValue();
-      size_t total_block_count = block_cache_.GetEntrySize();
       double rate = dirty_block_count / total_block_count;
-      if (rate >= 0.75) {
-        // todo, 将部分脏页刷盘，按照lru列表中的倒序顺序进行，因为排到后面的页面有更大的可能不被使用
+      if (rate >= 0.4) {
+        size_t flush_count = dirty_block_count * 0.2;
+        BPTREE_LOG_INFO("flush {} blocks to disk", flush_count);
+        // todo, 将部分脏页刷盘，按照lru列表中的倒序顺序进行，因为排到后面的页面有更大的可能不被修改
+        size_t current = 0;
+        block_cache_.ForeachValueInTheReverseOrderOfLRUList([this, flush_count, &current](const uint32_t& key, Block& block) -> bool {
+          if (current == flush_count) {
+            return false;
+          }
+          bool dirty = block.Flush();
+          if (dirty == true) {
+            current += 1;
+            BPTREE_LOG_DEBUG("block {} flush to disk, dirty", key);
+            this->dw_.WriteBlock(&block);
+            this->FlushBlockToFile(this->f_, block.GetIndex(), &block);
+          } else {
+            BPTREE_LOG_DEBUG("block {} don't flush to disk, clean", key);
+          }
+          return true;
+        });
       }
+      return;
+    }
+    // 固定的每隔2048个事务生成一个checkpoint
+    if (tx_count % 2048 == 0) {
+      CreateCheckPoint();
     }
   }
 

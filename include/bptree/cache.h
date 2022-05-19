@@ -5,9 +5,11 @@
 #include <list>
 #include <memory>
 #include <unordered_map>
+#include <source_location>
 
+#include "bptree/exception.h"
 #include "bptree/log.h"
-#include "exception.h"
+#include "bptree/metric/metric.h"
 
 namespace bptree {
 
@@ -158,6 +160,18 @@ class LRUCache {
     }
   }
 
+  void ForeachValueInTheReverseOrderOfLRUList(const std::function<bool(const Key& key, Value&)>& handler) {
+    Counter visit_count("visit_count");
+    for (auto it = lru_list_.rbegin(); it != lru_list_.rend(); ++it) {
+      visit_count.Add();
+      bool cont = handler(*it, *cache_[*it].value.get());
+      if (cont == false) {
+        break;
+      }
+    }
+    visit_count.PrintToLog();
+  }
+
   void MoveInUseToLruList(Key key, Entry& entry) {
     assert(entry.use_ref_ == 0);
     in_use_.erase(entry.iter);
@@ -200,9 +214,9 @@ class LRUCache {
     return in_use_.empty();
   }
 
-  size_t GetEntrySize() const {
-    return cache_.size();
-  }
+  size_t GetEntrySize() const { return cache_.size(); }
+
+  size_t GetCapacity() const { return capacity_; }
 
  private:
   std::unordered_map<Key, Entry> cache_;

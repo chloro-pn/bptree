@@ -32,7 +32,7 @@ bool BlockBase::Flush() noexcept {
   return true;
 }
 
-void BlockBase::SetDirty() { 
+void BlockBase::SetDirty() {
   if (dirty_ == true) {
     return;
   }

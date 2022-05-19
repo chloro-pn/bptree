@@ -140,7 +140,8 @@ struct DeleteInfo {
 
 class BlockBase {
  public:
-  BlockBase(BlockManager& manager) noexcept : manager_(manager), crc_(0), index_(0), height_(0), buf_init_(false), dirty_(true) {}
+  BlockBase(BlockManager& manager) noexcept
+      : manager_(manager), crc_(0), index_(0), height_(0), buf_init_(false), dirty_(true) {}
 
   BlockBase(BlockManager& manager, uint32_t index, uint32_t height) noexcept
       : manager_(manager), crc_(0), index_(index), height_(height), buf_init_(false), dirty_(false) {}
@@ -576,9 +577,7 @@ class SuperBlock : public BlockBase {
         value_size_(value_size),
         free_block_head_(0),
         free_block_size_(0),
-        current_max_block_index_(1) {
-
-  }
+        current_max_block_index_(1) {}
 
   void FlushToBuf(size_t offset) noexcept override {
     offset = AppendToBuf(buf_, root_index_, offset);

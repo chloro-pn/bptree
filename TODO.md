@@ -1,6 +1,6 @@
 todo:
 * 完善单元测试 [doing]
-* 完善错误处理
+* 完善错误处理 [done]
 * block的crc校验和lru cache策略，是上条的基础 [done] [update 重构了cache接口，便于recover流程处理]
 * 记录统计信息和日志 [doing]
 * 提供迭代器 [delete]
@@ -12,5 +12,6 @@ todo:
 * 基于WAL的崩溃恢复机制 [done]
 * double write机制 [done]
 * b+树并发控制 [无期限延迟]
-* 日志缓冲区、checkpoint、lsn [todo]
-* 恢复机制相关的代码重构和优化 [doing]
+* 日志缓冲区、checkpoint、lsn [doing]
+* 恢复机制相关的代码重构和优化 [done]
+* 增加解析wal日志的工具 [todo]
