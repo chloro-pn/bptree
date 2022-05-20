@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -80,6 +81,39 @@ inline void FileReadAt(FILE* f, void* buf, size_t size, size_t offset) {
 }
 
 inline bool FEof(FILE* f) { return feof(f) != 0; }
+
+template <typename T>
+inline void StringAppender(std::string& str, const T& t) {
+  str.append((const char*)&t, sizeof(t));
+}
+
+inline void StringAppender(std::string& str, const std::string& t) {
+  uint32_t length = static_cast<uint32_t>(t.size());
+  str.append((const char*)&length, sizeof(uint32_t));
+  str.append(t);
+}
+
+template <typename T>
+inline T StringParser(const std::string& str, size_t& offset) {
+  assert(offset + sizeof(T) <= str.size());
+  T t;
+  memcpy(&t, &str[offset], sizeof(T));
+  offset += sizeof(T);
+  return t;
+}
+
+inline std::string StringParser(const std::string& str, size_t& offset) {
+  assert(offset + sizeof(uint32_t) <= str.size());
+  uint32_t length = 0;
+  memcpy(&length, &str[offset], sizeof(uint32_t));
+  offset += sizeof(uint32_t);
+  assert(offset + length <= str.size());
+  std::string tmp;
+  tmp.resize(length);
+  memcpy(&tmp[0], &str[offset], length);
+  offset += length;
+  return tmp;
+}
 
 }  // namespace util
 }  // namespace bptree

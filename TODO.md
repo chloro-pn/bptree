@@ -15,3 +15,4 @@ todo:
 * 日志缓冲区、checkpoint、lsn [doing]
 * 恢复机制相关的代码重构和优化 [done]
 * 增加解析wal日志的工具 [todo]
+* 文件锁、提供只读访问模式和互斥写模式 [todo]

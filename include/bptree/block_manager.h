@@ -38,6 +38,20 @@ struct BlockManagerOption {
   uint32_t value_size;
 };
 
+namespace detail {
+
+enum class LogType : uint8_t {
+  SUPER_META,
+  BLOCK_META,
+  BLOCK_DATA,
+  BLOCK_ALLO,
+  BLOCK_DEAL,
+};
+
+inline constexpr uint8_t LogTypeToUint8T(LogType type) { return static_cast<uint8_t>(type); }
+
+}  // namespace detail
+
 class BlockManager {
  public:
   friend class Block;
@@ -105,6 +119,7 @@ class BlockManager {
   typename LRUCache<uint32_t, Block>::Wrapper GetBlock(uint32_t index) {
     auto wrapper = block_cache_.Get(index);
     if (wrapper.Exist() == false) {
+      GetMetricSet().GetAs<Counter>("cache_miss_count")->Add();
       auto block = LoadBlock(index, false);
       block_cache_.Insert(index, std::move(block));
       return block_cache_.Get(index);
@@ -308,20 +323,18 @@ class BlockManager {
 
   std::string CreateAllocBlockWalLog(uint32_t index, uint32_t height, uint32_t key_size, uint32_t value_size) {
     std::string result;
-    uint8_t type = 3;
-    result.append((const char*)&type, sizeof(type));
-    result.append((const char*)&index, sizeof(index));
-    result.append((const char*)&height, sizeof(height));
-    result.append((const char*)&key_size, sizeof(key_size));
-    result.append((const char*)&value_size, sizeof(value_size));
+    util::StringAppender(result, detail::LogTypeToUint8T(detail::LogType::BLOCK_ALLO));
+    util::StringAppender(result, index);
+    util::StringAppender(result, height);
+    util::StringAppender(result, key_size);
+    util::StringAppender(result, value_size);
     return result;
   }
 
   std::string CreateDeallocBlockWalLog(uint32_t index) {
     std::string result;
-    uint8_t type = 4;
-    result.append((const char*)&type, sizeof(type));
-    result.append((const char*)&index, sizeof(index));
+    util::StringAppender(result, detail::LogTypeToUint8T(detail::LogType::BLOCK_DEAL));
+    util::StringAppender(result, index);
     return result;
   }
 
@@ -492,83 +505,56 @@ class BlockManager {
 
   // todo 重构
   void HandleWal(uint64_t sequence, MsgType type, const std::string& log) {
-    uint8_t wal_type = 0;
     // 五种类型的日志：
-    // 1. superblock meta update
-    // 2. block alloc
-    // 3. block dealloc
-    // 4. block meta update
-    // 5. block data update
+    // superblock meta update
+    // block alloc
+    // block dealloc
+    // block meta update
+    // block data update
     size_t offset = 0;
-    memcpy(&wal_type, &log[offset], sizeof(uint8_t));
-    offset += sizeof(uint8_t);
-    if (wal_type == 0) {
-      uint32_t index = 0;
-      uint32_t length = 0;
-      std::string meta_name;
-      memcpy(&index, &log[offset], sizeof(index));
-      offset += sizeof(index);
-      assert(index == 0);
-      memcpy(&length, &log[offset], sizeof(length));
-      offset += sizeof(length);
-      meta_name = std::string(&log[offset], length);
-      offset += length;
-      uint32_t value = 0;
-      memcpy(&value, &log[offset], sizeof(value));
-      offset += sizeof(value);
-      assert(offset == log.size());
-      super_block_.HandleWAL(meta_name, value);
-    } else if (wal_type == 1) {
-      uint32_t index = 0;
-      uint32_t length = 0;
-      std::string meta_name;
-      memcpy(&index, &log[offset], sizeof(index));
-      offset += sizeof(index);
-      memcpy(&length, &log[offset], sizeof(length));
-      offset += sizeof(length);
-      meta_name = std::string(&log[offset], length);
-      offset += length;
-      uint32_t value = 0;
-      memcpy(&value, &log[offset], sizeof(value));
-      offset += sizeof(value);
-      assert(offset == log.size());
-      HandleBlockMetaUpdateWal(sequence, index, meta_name, value);
-    } else if (wal_type == 2) {
-      uint32_t index = 0;
-      uint32_t region_offset = 0;
-      uint32_t length = 0;
-      std::string region;
-      memcpy(&index, &log[offset], sizeof(uint32_t));
-      offset += sizeof(uint32_t);
-      memcpy(&region_offset, &log[offset], sizeof(uint32_t));
-      offset += sizeof(uint32_t);
-      memcpy(&length, &log[offset], sizeof(uint32_t));
-      offset += sizeof(uint32_t);
-      region = std::string(&log[offset], length);
-      offset += length;
-      assert(offset == log.size());
-      HandleBlockDataUpdateWal(sequence, index, region_offset, region);
-    } else if (wal_type == 3) {
-      uint32_t index = 0;
-      uint32_t height = 0;
-      uint32_t key_size = 0;
-      uint32_t value_size = 0;
-      memcpy(&index, &log[offset], sizeof(uint32_t));
-      offset += sizeof(uint32_t);
-      memcpy(&height, &log[offset], sizeof(uint32_t));
-      offset += sizeof(uint32_t);
-      memcpy(&key_size, &log[offset], sizeof(uint32_t));
-      offset += sizeof(uint32_t);
-      memcpy(&value_size, &log[offset], sizeof(uint32_t));
-      offset += sizeof(uint32_t);
-      HandleBlockAllocWal(sequence, index, height, key_size, value_size);
-    } else if (wal_type == 4) {
-      uint32_t index = 0;
-      memcpy(&index, &log[offset], sizeof(uint32_t));
-      offset += sizeof(uint32_t);
-      HandleBlockDeallocWal(sequence, index);
-    } else {
-      throw BptreeExecption("invalid wal type ", std::to_string(wal_type));
+    uint8_t wal_type = util::StringParser<uint8_t>(log, offset);
+    switch (wal_type) {
+      case detail::LogTypeToUint8T(detail::LogType::SUPER_META): {
+        uint32_t index = util::StringParser<uint32_t>(log, offset);
+        std::string meta_name = util::StringParser(log, offset);
+        uint32_t value = util::StringParser<uint32_t>(log, offset);
+        assert(offset == log.size());
+        super_block_.HandleWAL(meta_name, value);
+        break;
+      }
+      case detail::LogTypeToUint8T(detail::LogType::BLOCK_META): {
+        uint32_t index = util::StringParser<uint32_t>(log, offset);
+        std::string meta_name = util::StringParser(log, offset);
+        uint32_t value = util::StringParser<uint32_t>(log, offset);
+        assert(offset == log.size());
+        HandleBlockMetaUpdateWal(sequence, index, meta_name, value);
+        break;
+      }
+      case detail::LogTypeToUint8T(detail::LogType::BLOCK_DATA): {
+        uint32_t index = util::StringParser<uint32_t>(log, offset);
+        uint32_t region_offset = util::StringParser<uint32_t>(log, offset);
+        std::string region = util::StringParser(log, offset);
+        assert(offset == log.size());
+        HandleBlockDataUpdateWal(sequence, index, region_offset, region);
+        break;
+      }
+      case detail::LogTypeToUint8T(detail::LogType::BLOCK_ALLO): {
+        uint32_t index = util::StringParser<uint32_t>(log, offset);
+        uint32_t height = util::StringParser<uint32_t>(log, offset);
+        uint32_t key_size = util::StringParser<uint32_t>(log, offset);
+        uint32_t value_size = util::StringParser<uint32_t>(log, offset);
+        assert(offset == log.size());
+        HandleBlockAllocWal(sequence, index, height, key_size, value_size);
+        break;
+      }
+      case detail::LogTypeToUint8T(detail::LogType::BLOCK_DEAL): {
+        uint32_t index = util::StringParser<uint32_t>(log, offset);
+        HandleBlockDeallocWal(sequence, index);
+        break;
+      }
+      default: {
+        throw BptreeExecption("invalid wal type ", std::to_string(wal_type));
+      }
     }
   }
 
@@ -587,6 +573,7 @@ class BlockManager {
   void HandleBlockMetaUpdateWal(uint64_t sequence, uint32_t index, const std::string& name, uint32_t value) {
     auto wrapper = block_cache_.Get(index);
     if (wrapper.Exist() == false) {
+      GetMetricSet().GetAs<Counter>("cache_miss_count")->Add();
       BPTREE_LOG_DEBUG("block meta update load block {}", index);
       auto block = LoadBlock(index, true);
       block_cache_.Insert(index, std::move(block));
@@ -598,6 +585,7 @@ class BlockManager {
   void HandleBlockDataUpdateWal(uint64_t sequence, uint32_t index, uint32_t offset, const std::string& region) {
     auto wrapper = block_cache_.Get(index);
     if (wrapper.Exist() == false) {
+      GetMetricSet().GetAs<Counter>("cache_miss_count")->Add();
       BPTREE_LOG_DEBUG("block data update load block {}", index);
       auto block = LoadBlock(index, true);
       block_cache_.Insert(index, std::move(block));
@@ -617,24 +605,25 @@ class BlockManager {
       double rate = dirty_block_count / total_block_count;
       if (rate >= 0.4) {
         size_t flush_count = dirty_block_count * 0.2;
-        BPTREE_LOG_INFO("flush {} blocks to disk", flush_count);
+        BPTREE_LOG_DEBUG("flush {} blocks to disk", flush_count);
         // todo, 将部分脏页刷盘，按照lru列表中的倒序顺序进行，因为排到后面的页面有更大的可能不被修改
         size_t current = 0;
-        block_cache_.ForeachValueInTheReverseOrderOfLRUList([this, flush_count, &current](const uint32_t& key, Block& block) -> bool {
-          if (current == flush_count) {
-            return false;
-          }
-          bool dirty = block.Flush();
-          if (dirty == true) {
-            current += 1;
-            BPTREE_LOG_DEBUG("block {} flush to disk, dirty", key);
-            this->dw_.WriteBlock(&block);
-            this->FlushBlockToFile(this->f_, block.GetIndex(), &block);
-          } else {
-            BPTREE_LOG_DEBUG("block {} don't flush to disk, clean", key);
-          }
-          return true;
-        });
+        block_cache_.ForeachValueInTheReverseOrderOfLRUList(
+            [this, flush_count, &current](const uint32_t& key, Block& block) -> bool {
+              if (current == flush_count) {
+                return false;
+              }
+              bool dirty = block.Flush();
+              if (dirty == true) {
+                current += 1;
+                BPTREE_LOG_DEBUG("block {} flush to disk, dirty", key);
+                this->dw_.WriteBlock(&block);
+                this->FlushBlockToFile(this->f_, block.GetIndex(), &block);
+              } else {
+                BPTREE_LOG_DEBUG("block {} don't flush to disk, clean", key);
+              }
+              return true;
+            });
       }
       return;
     }
@@ -649,7 +638,6 @@ class BlockManager {
   // 1. 将所有cache中的block刷回磁盘(但是并不从cache中delete)
   // 2. 调用wal_.ResetLogFile()函数
   void CreateCheckPoint() {
-    BPTREE_LOG_INFO("create check point");
     FlushSuperBlockToFile(f_);
     Counter flush_block_count("flush_block_count");
     block_cache_.ForeachValueInCache([this, &flush_block_count](const uint32_t& key, Block& block) {
@@ -663,7 +651,7 @@ class BlockManager {
         BPTREE_LOG_DEBUG("block {} don't flush to disk, clean");
       }
     });
-    BPTREE_LOG_INFO("create check point : flush {} blocks to disk", flush_block_count.GetValue());
+    BPTREE_LOG_DEBUG("create check point : flush {} blocks to disk", flush_block_count.GetValue());
     // 此时所有修改操作都已经刷入磁盘，可以安全的删除wal日志
     wal_.ResetLogFile();
   }
@@ -675,6 +663,8 @@ class BlockManager {
     metric_set_.CreateMetric<Counter>("read_total_count");
     // cache中脏页的数量
     metric_set_.CreateMetric<Gauge>("dirty_block_count");
+    // cache miss的数量
+    metric_set_.CreateMetric<Counter>("cache_miss_count");
   }
 
  private:

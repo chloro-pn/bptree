@@ -15,6 +15,7 @@
 
 #include "bptree/exception.h"
 #include "bptree/log.h"
+#include "bptree/util.h"
 #include "bptree/wal.h"
 #include "crc32.h"
 
@@ -326,31 +327,9 @@ class Block : public BlockBase {
 
   const Entry& GetViewByIndex(size_t i) const noexcept { return kv_view_[i]; }
 
-  std::string CreateMetaChangeWalLog(const std::string& meta_name, uint32_t value) {
-    std::string result;
-    uint8_t type = 1;
-    result.append((const char*)&type, sizeof(type));
-    uint32_t index = GetIndex();
-    result.append((const char*)&index, sizeof(index));
-    uint32_t length = meta_name.size();
-    result.append((const char*)&length, sizeof(length));
-    result.append(meta_name);
-    result.append((const char*)&value, sizeof(value));
-    return result;
-  }
+  std::string CreateMetaChangeWalLog(const std::string& meta_name, uint32_t value);
 
-  std::string CreateDataChangeWalLog(uint32_t offset, const std::string& change_region) {
-    std::string result;
-    uint8_t type = 2;
-    result.append((const char*)&type, sizeof(type));
-    uint32_t index = GetIndex();
-    result.append((const char*)&index, sizeof(index));
-    result.append((const char*)&offset, sizeof(offset));
-    uint32_t length = change_region.size();
-    result.append((const char*)&length, sizeof(length));
-    result.append(change_region);
-    return result;
-  }
+  std::string CreateDataChangeWalLog(uint32_t offset, const std::string& change_region);
 
  private:
   uint32_t next_free_index_;
@@ -598,18 +577,7 @@ class SuperBlock : public BlockBase {
     offset = ::bptree::ParseFromBuf(buf_, current_max_block_index_, offset);
   }
 
-  std::string CreateMetaChangeWalLog(const std::string& meta_name, uint32_t value) {
-    std::string result;
-    uint8_t type = 0;
-    result.append((const char*)&type, sizeof(type));
-    uint32_t index = GetIndex();
-    result.append((const char*)&index, sizeof(index));
-    uint32_t length = meta_name.size();
-    result.append((const char*)&length, sizeof(length));
-    result.append(meta_name);
-    result.append((const char*)&value, sizeof(value));
-    return result;
-  }
+  std::string CreateMetaChangeWalLog(const std::string& meta_name, uint32_t value);
 
   void SetCurrentMaxBlockIndex(uint32_t value, uint64_t sequence);
 

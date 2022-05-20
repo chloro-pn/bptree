@@ -336,6 +336,24 @@ void Block::SetFreeList(uint32_t free_list, uint64_t sequence) noexcept {
   SetDirty();
 }
 
+std::string Block::CreateMetaChangeWalLog(const std::string& meta_name, uint32_t value) {
+  std::string result;
+  util::StringAppender(result, detail::LogTypeToUint8T(detail::LogType::BLOCK_META));
+  util::StringAppender(result, GetIndex());
+  util::StringAppender(result, meta_name);
+  util::StringAppender(result, value);
+  return result;
+}
+
+std::string Block::CreateDataChangeWalLog(uint32_t offset, const std::string& change_region) {
+  std::string result;
+  util::StringAppender(result, detail::LogTypeToUint8T(detail::LogType::BLOCK_DATA));
+  util::StringAppender(result, GetIndex());
+  util::StringAppender(result, offset);
+  util::StringAppender(result, change_region);
+  return result;
+}
+
 void Block::MoveFirstElementTo(Block* other, uint64_t sequence) {
   BPTREE_LOG_DEBUG("block {} move first element to {}", GetIndex(), other->GetIndex());
   assert(kv_view_.empty() == false);
@@ -537,6 +555,15 @@ std::string_view Block::SetEntryValue(uint32_t offset, const std::string& value,
 /*
  * super block
  */
+
+std::string SuperBlock::CreateMetaChangeWalLog(const std::string& meta_name, uint32_t value) {
+  std::string result;
+  util::StringAppender(result, detail::LogTypeToUint8T(detail::LogType::SUPER_META));
+  util::StringAppender(result, GetIndex());
+  util::StringAppender(result, meta_name);
+  util::StringAppender(result, value);
+  return result;
+}
 
 void SuperBlock::SetCurrentMaxBlockIndex(uint32_t value, uint64_t sequence) {
   BPTREE_LOG_DEBUG("super block set current_max_block_index from {} to {}", current_max_block_index_, value);
