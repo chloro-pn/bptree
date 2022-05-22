@@ -23,6 +23,7 @@ TEST(wal, all) {
   };
   {
     bptree::WriteAheadLog wal("bptree_wal.log", recover_func);
+    wal.OpenFile();
     wal.Recover();
     uint64_t tx_seq = wal.Begin();
     wal.WriteLog(tx_seq, "a=3", "a=0");
@@ -43,6 +44,7 @@ TEST(wal, all) {
   // 因为a和b的wal日志以及其事务结束日志写入成功，因此a和b的值不会被回滚
   // c和d的wal日志写入了一半，因此c写入的值会被回滚
   bptree::WriteAheadLog wal2("bptree_wal.log", recover_func);
+  wal2.OpenFile();
   wal2.Recover();
   EXPECT_EQ(a, 3);
   EXPECT_EQ(b, 4);

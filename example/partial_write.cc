@@ -5,7 +5,7 @@ int main() {
   option.neflag = bptree::NotExistFlag::CREATE;
   option.eflag = bptree::ExistFlag::ERROR;
   option.mode = bptree::Mode::WR;
-  option.file_name = "test.db";
+  option.db_name = "test_partial";
   option.key_size = 1;
   option.value_size = 5;
   bptree::BlockManager manager(option);

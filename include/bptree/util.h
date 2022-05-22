@@ -18,6 +18,8 @@ inline bool FileNotExist(const std::string& filename) {
 
 inline void DeleteFile(const std::string& filename) { std::filesystem::remove(std::filesystem::path(filename)); }
 
+inline bool CreateDir(const std::string& dir) { return std::filesystem::create_directory(std::filesystem::path(dir)); }
+
 // 打开一个已经存在的文件，如果不存在则抛出异常
 inline FILE* OpenFile(const std::string& file_name) {
   FILE* f = fopen(file_name.c_str(), "rb+");

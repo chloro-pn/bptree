@@ -12,7 +12,7 @@ int main(int argc, char* argv[]) {
   std::string key(argv[2]);
   try {
     bptree::BlockManagerOption option;
-    option.file_name = name;
+    option.db_name = name;
     option.neflag = bptree::NotExistFlag::ERROR;
     option.eflag = bptree::ExistFlag::SUCC;
     option.mode = bptree::Mode::R;

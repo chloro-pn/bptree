@@ -13,7 +13,9 @@ namespace bptree {
 
 class DoubleWrite {
  public:
-  explicit DoubleWrite(const std::string& file_name) : file_name_(file_name), f_(nullptr) {
+  explicit DoubleWrite(const std::string& file_name) : file_name_(file_name), f_(nullptr) {}
+
+  void OpenFile() {
     if (util::FileNotExist(file_name_)) {
       f_ = util::CreateFile(file_name_);
     } else {

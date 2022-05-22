@@ -50,7 +50,7 @@ enum class ExistFlag {
 };
 
 struct BlockManagerOption {
-  std::string file_name;
+  std::string db_name;
   Mode mode;
   NotExistFlag neflag;
   ExistFlag eflag;
@@ -81,11 +81,11 @@ class BlockManager {
   BPTREE_INTERFACE explicit BlockManager(BlockManagerOption option)
       : mode_(option.mode),
         block_cache_(1024),
-        file_name_(option.file_name),
+        db_name_(option.db_name),
         super_block_(*this, option.key_size, option.value_size),
-        wal_(file_name_ + "_wal.log",
+        wal_(db_name_ + "/" + db_name_ + "_wal.log",
              [this](uint64_t seq, MsgType type, const std::string log) -> void { this->HandleWal(seq, type, log); }),
-        dw_(file_name_ + "_double_write.log") {
+        dw_(db_name_ + "/" + db_name_ + "_double_write.log") {
     block_cache_.SetFreeNotify([this](const uint32_t& key, Block& value) -> void {
       bool dirty = value.Flush();
       if (dirty == true) {
@@ -97,9 +97,9 @@ class BlockManager {
       }
     });
     RegisterMetrics();
-    if (util::FileNotExist(file_name_)) {
+    if (util::FileNotExist(db_name_)) {
       if (option.neflag == NotExistFlag::ERROR) {
-        throw BptreeExecption("file ", file_name_, " not exist");
+        throw BptreeExecption("db ", db_name_, " not exist");
       }
       if (option.key_size == 0 || option.value_size == 0) {
         throw BptreeExecption(
@@ -110,7 +110,10 @@ class BlockManager {
       super_block_.root_index_ = 1;
       super_block_.free_block_head_ = 0;
       super_block_.current_max_block_index_ = 1;
-      f_ = util::CreateFile(file_name_);
+      util::CreateDir(db_name_);
+      f_ = util::CreateFile(db_name_ + "/" + db_name_ + ".db");
+      wal_.OpenFile();
+      dw_.OpenFile();
       auto root_block = std::unique_ptr<Block>(
           new Block(*this, super_block_.root_index_, 1, super_block_.key_size_, super_block_.value_size_));
       block_cache_.Insert(super_block_.root_index_, std::move(root_block));
@@ -123,17 +126,19 @@ class BlockManager {
       std::string undo_log = "";
       wal_.WriteLog(seq, redo_log, undo_log);
       wal_.End(seq);
-      BPTREE_LOG_INFO("create db {} succ", file_name_);
+      BPTREE_LOG_INFO("create db {} succ", db_name_);
     } else {
       if (option.eflag == ExistFlag::ERROR) {
-        throw BptreeExecption("file ", file_name_, " already exists");
+        throw BptreeExecption("db ", db_name_, " already exists");
       }
-      f_ = util::OpenFile(file_name_);
+      f_ = util::OpenFile(db_name_ + "/" + db_name_ + ".db");
+      wal_.OpenFile();
+      dw_.OpenFile();
       ParseSuperBlockFromFile();
       wal_.Recover();
       // 这个时候cache中的block buf都已经通过wal日志恢复，但是kvview还没有变更，因此需要对cache中的block更新kvview
       block_cache_.ForeachValueInCache([](const uint32_t& index, Block& block) { block.UpdateKvViewByBuf(); });
-      BPTREE_LOG_INFO("open db {} succ", file_name_);
+      BPTREE_LOG_INFO("open db {} succ", db_name_);
     }
   }
 
@@ -154,8 +159,8 @@ class BlockManager {
   }
 
   // 范围查找，key为需要查找的起始点，对后续的每个kv调用functor，根据返回值确定结束范围查找 or 跳过 or 选择
-  BPTREE_INTERFACE std::vector<std::pair<std::string, std::string>> GetRange(const std::string& key,
-                                                            std::function<GetRangeOption(const Entry& entry)> functor) {
+  BPTREE_INTERFACE std::vector<std::pair<std::string, std::string>> GetRange(
+      const std::string& key, std::function<GetRangeOption(const Entry& entry)> functor) {
     if (mode_ != Mode::R && mode_ != Mode::WR) {
       throw BptreeExecption("Permission denied");
     }
@@ -253,7 +258,8 @@ class BlockManager {
   }
 
   // 更新，如果key不在db中，直接返回，否则会将对应的value在内存中的缓存传递给updator，由update执行更新，bptree负责将数据重新刷回硬盘
-  BPTREE_INTERFACE bool Update(const std::string& key, const std::function<void(char* const ptr, size_t len)>& updator) {
+  BPTREE_INTERFACE bool Update(const std::string& key,
+                               const std::function<void(char* const ptr, size_t len)>& updator) {
     if (mode_ != Mode::W && mode_ != Mode::WR) {
       throw BptreeExecption("Permission denied");
     }
@@ -316,7 +322,6 @@ class BlockManager {
   uint32_t GetRootIndex() const noexcept { return super_block_.root_index_; }
 
  private:
-
   std::pair<uint32_t, uint32_t> BlockSplit(const Block* block, uint64_t sequence) {
     uint32_t new_block_1_index = AllocNewBlock(block->GetHeight(), sequence);
     uint32_t new_block_2_index = AllocNewBlock(block->GetHeight(), sequence);
@@ -708,7 +713,7 @@ class BlockManager {
  private:
   Mode mode_;
   LRUCache<uint32_t, Block> block_cache_;
-  std::string file_name_;
+  std::string db_name_;
   SuperBlock super_block_;
   FILE* f_;
   WriteAheadLog wal_;

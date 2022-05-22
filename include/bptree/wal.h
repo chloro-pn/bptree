@@ -61,7 +61,9 @@ class WriteAheadLog {
   };
 
   WriteAheadLog(const std::string& file_name, const std::function<void(uint64_t, MsgType, std::string)>& handler)
-      : next_wal_sequence_(0), next_log_number_(0), file_name_(file_name), f_(nullptr), log_handler_(handler) {
+      : next_wal_sequence_(0), next_log_number_(0), file_name_(file_name), f_(nullptr), log_handler_(handler) {}
+
+  void OpenFile() {
     if (util::FileNotExist(file_name_)) {
       f_ = util::CreateFile(file_name_);
     } else {
