@@ -263,10 +263,11 @@ class BlockManager {
     if (mode_ != Mode::W && mode_ != Mode::WR) {
       throw BptreeExecption("Permission denied");
     }
-    uint64_t sequence = wal_.Begin();
     if (key.size() != super_block_.key_size_) {
       throw BptreeExecption("wrong key length");
     }
+    GetMetricSet().GetAs<Counter>("tx_total_count")->Add();
+    uint64_t sequence = wal_.Begin();
     bool succ = GetBlock(super_block_.root_index_).Get().Update(key, updator, sequence);
     wal_.End(sequence);
     AfterCommitTx();
@@ -290,6 +291,8 @@ class BlockManager {
   }
 
   BPTREE_INTERFACE void PrintCacheInfo() { block_cache_.PrintInfo(); }
+
+  BPTREE_INTERFACE void PrintMetricSet() { metric_set_.Print(); }
 
   BPTREE_INTERFACE void PrintSuperBlockInfo() {
     BPTREE_LOG_INFO("-----begin super block print-----");

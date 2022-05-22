@@ -36,6 +36,14 @@ class MetricSet {
     return std::nullopt;
   }
 
+  void Print() {
+    BPTREE_LOG_INFO("-----print metric set-----");
+    for(auto& each : metrics_) {
+      each.second->PrintToLog();
+    }
+    BPTREE_LOG_INFO("---------end print---------")
+  }
+
  private:
   std::unordered_map<std::string, std::unique_ptr<Metric>> metrics_;
 };

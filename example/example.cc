@@ -100,5 +100,6 @@ int main() {
   BPTREE_LOG_INFO("all check succ");
   manager.PrintSuperBlockInfo();
   manager.PrintRootBlock();
+  manager.PrintMetricSet();
   return 0;
 }

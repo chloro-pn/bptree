@@ -169,7 +169,6 @@ class LRUCache {
         break;
       }
     }
-    visit_count.PrintToLog();
   }
 
   void MoveInUseToLruList(Key key, Entry& entry) {
