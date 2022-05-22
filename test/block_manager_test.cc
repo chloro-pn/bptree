@@ -6,7 +6,9 @@ TEST(block_manager, base) {
   spdlog::set_level(spdlog::level::debug);
   bptree::BlockManagerOption option;
   option.file_name = "test.db";
-  option.create = true;
+  option.neflag = bptree::NotExistFlag::CREATE;
+  option.eflag = bptree::ExistFlag::ERROR;
+  option.mode = bptree::Mode::WR;
   option.key_size = 1;
   option.value_size = 5;
   bptree::BlockManager manager(option);
@@ -37,7 +39,9 @@ TEST(block_manager, base) {
 TEST(block_manager, getrange) {
   bptree::BlockManagerOption option;
   option.file_name = "test2.db";
-  option.create = true;
+  option.neflag = bptree::NotExistFlag::CREATE;
+  option.eflag = bptree::ExistFlag::ERROR;
+  option.mode = bptree::Mode::WR;
   option.key_size = 1;
   option.value_size = 5;
   bptree::BlockManager manager(option);

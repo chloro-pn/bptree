@@ -13,7 +13,9 @@ int main(int argc, char* argv[]) {
   try {
     bptree::BlockManagerOption option;
     option.file_name = name;
-    option.create = false;
+    option.neflag = bptree::NotExistFlag::ERROR;
+    option.eflag = bptree::ExistFlag::SUCC;
+    option.mode = bptree::Mode::R;
     bptree::BlockManager manager(option);
     auto position = manager.GetBlock(manager.GetRootIndex()).Get().GetBlockIndexContainKey(key);
     if (position.first == 0) {

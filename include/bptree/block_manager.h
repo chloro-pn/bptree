@@ -21,6 +21,8 @@
 #include "bptree/util.h"
 #include "bptree/wal.h"
 
+#define BPTREE_INTERFACE
+
 namespace bptree {
 
 constexpr uint32_t bit_map_size = 1024;
@@ -31,9 +33,27 @@ enum class GetRangeOption {
   STOP,
 };
 
+enum class Mode {
+  R,
+  W,
+  WR,
+};
+
+enum class NotExistFlag {
+  CREATE,
+  ERROR,
+};
+
+enum class ExistFlag {
+  SUCC,
+  ERROR,
+};
+
 struct BlockManagerOption {
   std::string file_name;
-  bool create;
+  Mode mode;
+  NotExistFlag neflag;
+  ExistFlag eflag;
   uint32_t key_size;
   uint32_t value_size;
 };
@@ -55,9 +75,12 @@ inline constexpr uint8_t LogTypeToUint8T(LogType type) { return static_cast<uint
 class BlockManager {
  public:
   friend class Block;
+  friend class BlockBase;
+  friend class SuperBlock;
 
-  explicit BlockManager(BlockManagerOption option)
-      : block_cache_(1024),
+  BPTREE_INTERFACE explicit BlockManager(BlockManagerOption option)
+      : mode_(option.mode),
+        block_cache_(1024),
         file_name_(option.file_name),
         super_block_(*this, option.key_size, option.value_size),
         wal_(file_name_ + "_wal.log",
@@ -75,7 +98,7 @@ class BlockManager {
     });
     RegisterMetrics();
     if (util::FileNotExist(file_name_)) {
-      if (option.create == false) {
+      if (option.neflag == NotExistFlag::ERROR) {
         throw BptreeExecption("file ", file_name_, " not exist");
       }
       if (option.key_size == 0 || option.value_size == 0) {
@@ -102,7 +125,7 @@ class BlockManager {
       wal_.End(seq);
       BPTREE_LOG_INFO("create db {} succ", file_name_);
     } else {
-      if (option.create == true) {
+      if (option.eflag == ExistFlag::ERROR) {
         throw BptreeExecption("file ", file_name_, " already exists");
       }
       f_ = util::OpenFile(file_name_);
@@ -114,23 +137,13 @@ class BlockManager {
     }
   }
 
-  ~BlockManager() { FlushToFile(); }
-
-  typename LRUCache<uint32_t, Block>::Wrapper GetBlock(uint32_t index) {
-    auto wrapper = block_cache_.Get(index);
-    if (wrapper.Exist() == false) {
-      GetMetricSet().GetAs<Counter>("cache_miss_count")->Add();
-      auto block = LoadBlock(index, false);
-      block_cache_.Insert(index, std::move(block));
-      return block_cache_.Get(index);
-    }
-    return wrapper;
-  }
-
-  uint32_t GetRootIndex() const noexcept { return super_block_.root_index_; }
+  BPTREE_INTERFACE ~BlockManager() { FlushToFile(); }
 
   // 单点查找，如果db中存在key，返回对应的value，否则返回""
-  std::string Get(const std::string& key) {
+  BPTREE_INTERFACE std::string Get(const std::string& key) {
+    if (mode_ != Mode::R && mode_ != Mode::WR) {
+      throw BptreeExecption("Permission denied");
+    }
     if (key.size() != super_block_.key_size_) {
       throw BptreeExecption("wrong key length");
     }
@@ -141,8 +154,11 @@ class BlockManager {
   }
 
   // 范围查找，key为需要查找的起始点，对后续的每个kv调用functor，根据返回值确定结束范围查找 or 跳过 or 选择
-  std::vector<std::pair<std::string, std::string>> GetRange(const std::string& key,
+  BPTREE_INTERFACE std::vector<std::pair<std::string, std::string>> GetRange(const std::string& key,
                                                             std::function<GetRangeOption(const Entry& entry)> functor) {
+    if (mode_ != Mode::R && mode_ != Mode::WR) {
+      throw BptreeExecption("Permission denied");
+    }
     if (key.size() != super_block_.key_size_) {
       throw BptreeExecption("wrong key length");
     }
@@ -181,7 +197,10 @@ class BlockManager {
   // 插入，如果key已经存在于db中，执行更新操作
   // insert流程中任何涉及到数据修改的地方都需要使用wal日志记录，包括：
   // BlockSplit、修改链接关系、InsertKv操作、对old_root的刷新操作
-  void Insert(const std::string& key, const std::string& value) {
+  BPTREE_INTERFACE void Insert(const std::string& key, const std::string& value) {
+    if (mode_ != Mode::W && mode_ != Mode::WR) {
+      throw BptreeExecption("Permission denied");
+    }
     if (key.size() != super_block_.key_size_ || value.size() != super_block_.value_size_) {
       throw BptreeExecption("wrong kv length");
     }
@@ -218,7 +237,10 @@ class BlockManager {
   }
 
   // 删除
-  void Delete(const std::string& key) {
+  BPTREE_INTERFACE void Delete(const std::string& key) {
+    if (mode_ != Mode::W && mode_ != Mode::WR) {
+      throw BptreeExecption("Permission denied");
+    }
     if (key.size() != super_block_.key_size_) {
       throw BptreeExecption("wrong key length");
     }
@@ -231,7 +253,10 @@ class BlockManager {
   }
 
   // 更新，如果key不在db中，直接返回，否则会将对应的value在内存中的缓存传递给updator，由update执行更新，bptree负责将数据重新刷回硬盘
-  bool Update(const std::string& key, const std::function<void(char* const ptr, size_t len)>& updator) {
+  BPTREE_INTERFACE bool Update(const std::string& key, const std::function<void(char* const ptr, size_t len)>& updator) {
+    if (mode_ != Mode::W && mode_ != Mode::WR) {
+      throw BptreeExecption("Permission denied");
+    }
     uint64_t sequence = wal_.Begin();
     if (key.size() != super_block_.key_size_) {
       throw BptreeExecption("wrong key length");
@@ -242,12 +267,12 @@ class BlockManager {
     return succ;
   }
 
-  void PrintRootBlock() {
+  BPTREE_INTERFACE void PrintRootBlock() {
     auto root_block = GetBlock(super_block_.root_index_);
     root_block.Get().Print();
   }
 
-  void PrintBlockByIndex(uint32_t index) {
+  BPTREE_INTERFACE void PrintBlockByIndex(uint32_t index) {
     if (index == 0) {
       throw BptreeExecption("should not print super block");
     }
@@ -258,9 +283,9 @@ class BlockManager {
     block.Get().Print();
   }
 
-  void PrintCacheInfo() { block_cache_.PrintInfo(); }
+  BPTREE_INTERFACE void PrintCacheInfo() { block_cache_.PrintInfo(); }
 
-  void PrintSuperBlockInfo() {
+  BPTREE_INTERFACE void PrintSuperBlockInfo() {
     BPTREE_LOG_INFO("-----begin super block print-----");
     BPTREE_LOG_INFO("root_index : {}", super_block_.root_index_);
     BPTREE_LOG_INFO("key size and value size : {} {}", super_block_.key_size_, super_block_.value_size_);
@@ -277,7 +302,21 @@ class BlockManager {
 
   MetricSet& GetMetricSet() { return metric_set_; }
 
+  typename LRUCache<uint32_t, Block>::Wrapper GetBlock(uint32_t index) {
+    auto wrapper = block_cache_.Get(index);
+    if (wrapper.Exist() == false) {
+      GetMetricSet().GetAs<Counter>("cache_miss_count")->Add();
+      auto block = LoadBlock(index, false);
+      block_cache_.Insert(index, std::move(block));
+      return block_cache_.Get(index);
+    }
+    return wrapper;
+  }
+
+  uint32_t GetRootIndex() const noexcept { return super_block_.root_index_; }
+
  private:
+
   std::pair<uint32_t, uint32_t> BlockSplit(const Block* block, uint64_t sequence) {
     uint32_t new_block_1_index = AllocNewBlock(block->GetHeight(), sequence);
     uint32_t new_block_2_index = AllocNewBlock(block->GetHeight(), sequence);
@@ -503,7 +542,6 @@ class BlockManager {
     return new_block;
   }
 
-  // todo 重构
   void HandleWal(uint64_t sequence, MsgType type, const std::string& log) {
     // 五种类型的日志：
     // superblock meta update
@@ -668,6 +706,7 @@ class BlockManager {
   }
 
  private:
+  Mode mode_;
   LRUCache<uint32_t, Block> block_cache_;
   std::string file_name_;
   SuperBlock super_block_;

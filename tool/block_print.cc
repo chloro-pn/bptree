@@ -12,7 +12,9 @@ int main(int argc, char* argv[]) {
   try {
     bptree::BlockManagerOption option;
     option.file_name = name;
-    option.create = false;
+    option.neflag = bptree::NotExistFlag::ERROR;
+    option.eflag = bptree::ExistFlag::SUCC;
+    option.mode = bptree::Mode::R;
     bptree::BlockManager manager(option);
     uint32_t block_index = atol(argv[2]);
     if (block_index == 0) {

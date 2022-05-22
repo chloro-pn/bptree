@@ -48,7 +48,9 @@ TEST(block, helper) {
 TEST(block, constructor) {
   bptree::BlockManagerOption option;
   option.file_name = "test3.db";
-  option.create = true;
+  option.neflag = bptree::NotExistFlag::CREATE;
+  option.eflag = bptree::ExistFlag::ERROR;
+  option.mode = bptree::Mode::WR;
   option.key_size = 1;
   option.value_size = 5;
   bptree::BlockManager manager(option);

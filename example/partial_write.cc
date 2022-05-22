@@ -2,7 +2,9 @@
 
 int main() {
   bptree::BlockManagerOption option;
-  option.create = true;
+  option.neflag = bptree::NotExistFlag::CREATE;
+  option.eflag = bptree::ExistFlag::ERROR;
+  option.mode = bptree::Mode::WR;
   option.file_name = "test.db";
   option.key_size = 1;
   option.value_size = 5;

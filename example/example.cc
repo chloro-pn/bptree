@@ -36,7 +36,9 @@ int main() {
   BPTREE_LOG_INFO("create db : test.db and insert 10w kvs");
   bptree::BlockManagerOption option;
   option.file_name = "test.db";
-  option.create = true;
+  option.neflag = bptree::NotExistFlag::CREATE;
+  option.eflag = bptree::ExistFlag::ERROR;
+  option.mode = bptree::Mode::WR;
   option.key_size = 10;
   option.value_size = 20;
   bptree::BlockManager manager(option);
@@ -98,8 +100,5 @@ int main() {
   BPTREE_LOG_INFO("all check succ");
   manager.PrintSuperBlockInfo();
   manager.PrintRootBlock();
-
-  manager.GetFaultInjection().RegisterTheLastWalWriteFailCondition([]() -> bool { return true; });
-  // std::filesystem::remove(std::filesystem::path("test.db"));
   return 0;
 }
