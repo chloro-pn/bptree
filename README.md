@@ -23,6 +23,9 @@ bptree是一个持久化到磁盘的b+树实现
 在构建之前确保你的编译环境支持c++20标准
 git clone下载项目，并在根目录执行bazel build ...即可
 
+## doc ##
+https://softacheck.com/app/docs/chloro-pn/bptree/
+
 ## test ##
 bazel test ...
 
