@@ -15,6 +15,7 @@
 #include "bptree/double_write.h"
 #include "bptree/exception.h"
 #include "bptree/fault_injection.h"
+#include "bptree/key_comparator.h"
 #include "bptree/log.h"
 #include "bptree/metric/metric.h"
 #include "bptree/metric/metric_set.h"
@@ -78,8 +79,10 @@ class BlockManager {
   friend class BlockBase;
   friend class SuperBlock;
 
-  BPTREE_INTERFACE explicit BlockManager(BlockManagerOption option)
+  BPTREE_INTERFACE explicit BlockManager(
+      BlockManagerOption option, std::unique_ptr<Comparator>&& cmp = std::unique_ptr<Comparator>(new Comparator()))
       : mode_(option.mode),
+        comparator_(std::move(cmp)),
         block_cache_(1024),
         db_name_(option.db_name),
         super_block_(*this, option.key_size, option.value_size),
@@ -311,6 +314,8 @@ class BlockManager {
 
   MetricSet& GetMetricSet() { return metric_set_; }
 
+  const Comparator& GetComparator() { return *comparator_.get(); }
+
   typename LRUCache<uint32_t, Block>::Wrapper GetBlock(uint32_t index) {
     auto wrapper = block_cache_.Get(index);
     if (wrapper.Exist() == false) {
@@ -325,6 +330,7 @@ class BlockManager {
   uint32_t GetRootIndex() const noexcept { return super_block_.root_index_; }
 
  private:
+  // todo 优化，这里的kv顺序是已知的，可以使用AppendKv之类的接口，InsertKv内部还要进行查找和排序。
   std::pair<uint32_t, uint32_t> BlockSplit(const Block* block, uint64_t sequence) {
     uint32_t new_block_1_index = AllocNewBlock(block->GetHeight(), sequence);
     uint32_t new_block_2_index = AllocNewBlock(block->GetHeight(), sequence);
@@ -715,6 +721,7 @@ class BlockManager {
 
  private:
   Mode mode_;
+  std::unique_ptr<Comparator> comparator_;
   LRUCache<uint32_t, Block> block_cache_;
   std::string db_name_;
   SuperBlock super_block_;

@@ -232,6 +232,9 @@ class Block : public BlockBase {
     if (GetHeight() != 0) {
       value_size_ = sizeof(uint32_t);
     }
+    if (GetMaxEntrySize() < 1) {
+      throw BptreeExecption("key and value occupy too much space");
+    }
     InitEmptyEntrys(no_wal_sequence);
   }
 
@@ -258,6 +261,14 @@ class Block : public BlockBase {
       throw BptreeExecption("get max key from empty block ", std::to_string(GetIndex()));
     }
     return std::string(kv_view_.back().key_view);
+  }
+
+  // note: 只有在持有block的wrapper的时候才保证正确，否则可能导致结果指向资源已经被释放的地址
+  std::string_view GetMaxKeyAsView() const {
+    if (kv_view_.empty() == true) {
+      throw BptreeExecption("get max key from empty block ", std::to_string(GetIndex()));
+    }
+    return kv_view_.back().key_view;
   }
 
   // 查找含有key的leaf block的index以及view_index

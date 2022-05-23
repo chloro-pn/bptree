@@ -53,7 +53,7 @@ std::pair<uint32_t, uint32_t> Block::GetBlockIndexContainKey(const std::string& 
   assert(GetHeight() != super_height);
   if (GetHeight() > 0) {
     for (size_t i = 0; i < kv_view_.size(); ++i) {
-      if (kv_view_[i].key_view >= key) {
+      if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) >= 0) {
         uint32_t child_index = GetChildIndex(i);
         return manager_.GetBlock(child_index).Get().GetBlockIndexContainKey(key);
       }
@@ -61,7 +61,7 @@ std::pair<uint32_t, uint32_t> Block::GetBlockIndexContainKey(const std::string& 
     return {0, 0};
   } else {
     for (size_t i = 0; i < kv_view_.size(); ++i) {
-      if (kv_view_[i].key_view == key) {
+      if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) == 0) {
         return {GetIndex(), i};
       }
     }
@@ -76,7 +76,7 @@ std::string Block::Get(const std::string& key) {
   assert(GetHeight() != super_height);
   if (GetHeight() > 0) {
     for (size_t i = 0; i < kv_view_.size(); ++i) {
-      if (kv_view_[i].key_view >= key) {
+      if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) >= 0) {
         uint32_t child_index = GetChildIndex(i);
         return manager_.GetBlock(child_index).Get().Get(key);
       }
@@ -85,7 +85,7 @@ std::string Block::Get(const std::string& key) {
     return "";
   } else {
     for (size_t i = 0; i < kv_view_.size(); ++i) {
-      if (kv_view_[i].key_view == key) {
+      if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) == 0) {
         uint32_t offset = GetOffsetByEntryIndex(kv_view_[i].index);
         std::string result = std::string(GetEntryValueView(offset));
         BPTREE_LOG_DEBUG("get {} from leaf block {}, value == {}", key, GetIndex(), result);
@@ -112,7 +112,7 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value, uint6
     }
     int32_t child_index = -1;
     for (size_t i = 0; i < kv_view_.size(); ++i) {
-      if (kv_view_[i].key_view >= key) {
+      if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) >= 0) {
         child_index = i;
         break;
       }
@@ -130,7 +130,9 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value, uint6
     }
     return DoSplit(child_index, info.key_, info.value_, sequence);
   } else {
-    auto it = std::find_if(kv_view_.begin(), kv_view_.end(), [&](const Entry& n) -> bool { return n.key_view == key; });
+    auto it = std::find_if(kv_view_.begin(), kv_view_.end(), [&](const Entry& n) -> bool {
+      return this->manager_.GetComparator().Compare(n.key_view, std::string_view(key)) == 0;
+    });
     if (it != kv_view_.end()) {
       UpdateEntryValue(it->index, value, sequence);
       BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {}, the key already exists, update value", key, value,
@@ -155,11 +157,12 @@ DeleteInfo Block::Delete(const std::string& key, uint64_t sequence) {
   assert(GetHeight() != super_height);
   if (GetHeight() > 0) {
     for (size_t i = 0; i < kv_view_.size(); ++i) {
-      if (kv_view_[i].key_view >= key) {
+      if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) >= 0) {
         auto block = manager_.GetBlock(GetChildIndex(i));
         DeleteInfo info = block.Get().Delete(key, sequence);
         assert(info.state_ != DeleteInfo::State::Invalid);
-        if (kv_view_[i].key_view == key && block.Get().GetKVView().size() != 0) {
+        if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) == 0 &&
+            block.Get().GetKVView().size() != 0) {
           // 更新maxkey的记录，如果子节点block的kv为空不需要处理，因为后面会在DoMerge中删除这个节点
           BPTREE_LOG_DEBUG("update inner block {}'s key because of delete, key == {}", GetIndex(), key);
           UpdateEntryKey(kv_view_[i].index, block.Get().GetMaxKey(), sequence);
@@ -179,7 +182,7 @@ DeleteInfo Block::Delete(const std::string& key, uint64_t sequence) {
     return DeleteInfo::Ok();
   } else {
     for (auto it = kv_view_.begin(); it != kv_view_.end(); ++it) {
-      if (it->key_view == key) {
+      if (manager_.GetComparator().Compare(it->key_view, std::string_view(key)) == 0) {
         RemoveEntry(it->index, it == kv_view_.begin() ? 0 : (it - 1)->index, sequence);
         kv_view_.erase(it);
         break;
@@ -203,13 +206,15 @@ bool Block::Update(const std::string& key, const std::function<void(char* const 
   assert(GetHeight() != super_height);
   if (GetHeight() > 0) {
     for (size_t i = 0; i < kv_view_.size(); ++i) {
-      if (key <= kv_view_[i].key_view) {
+      if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) >= 0) {
         return manager_.GetBlock(GetChildIndex(i)).Get().Update(key, updator, sequence);
       }
     }
     return false;
   } else {
-    auto it = std::find_if(kv_view_.begin(), kv_view_.end(), [&](const Entry& n) -> bool { return n.key_view == key; });
+    auto it = std::find_if(kv_view_.begin(), kv_view_.end(), [&](const Entry& n) -> bool {
+      return this->manager_.GetComparator().Compare(n.key_view, std::string_view(key)) == 0;
+    });
     if (it != kv_view_.end()) {
       // const_cast只能修改底层const
       char* const ptr = const_cast<char* const>(it->value_view.data());
@@ -230,10 +235,10 @@ bool Block::Update(const std::string& key, const std::function<void(char* const 
 bool Block::InsertKv(const std::string_view& key, const std::string_view& value, uint64_t sequence) noexcept {
   uint32_t prev_index = std::numeric_limits<uint32_t>::max();
   for (size_t i = 0; i < kv_view_.size(); ++i) {
-    if (kv_view_[i].key_view == key) {
+    if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) == 0) {
       UpdateEntryValue(kv_view_[i].index, std::string(value), sequence);
       return true;
-    } else if (kv_view_[i].key_view > key) {
+    } else if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) > 0) {
       break;
     } else {
       prev_index = i;
@@ -249,10 +254,11 @@ bool Block::InsertKv(const std::string_view& key, const std::string_view& value,
   if (full == true) {
     return false;
   }
-  // todo 优化
-  kv_view_.push_back(entry);
-  std::sort(kv_view_.begin(), kv_view_.end(),
-            [](const Entry& n1, const Entry& n2) -> bool { return n1.key_view < n2.key_view; });
+  auto it = kv_view_.begin();
+  if (prev_index != std::numeric_limits<uint32_t>::max()) {
+    std::advance(it, prev_index + 1);
+  }
+  kv_view_.insert(it, entry);
   return true;
 }
 
@@ -403,13 +409,14 @@ InsertInfo Block::DoSplit(uint32_t child_index, const std::string& key, const st
   // 删除过时节点
   manager_.DeallocBlock(block_index, sequence, false);
   // 将key和value插入到新的节点中
-  if (key <= new_block_1.Get().GetMaxKey()) {
+  if (manager_.GetComparator().Compare(std::string_view(key), new_block_1.Get().GetMaxKeyAsView()) <= 0) {
     bool succ = new_block_1.Get().InsertKv(key, value, sequence);
     assert(succ == true);
   } else {
     bool succ = new_block_2.Get().InsertKv(key, value, sequence);
     assert(succ == true);
   }
+  // todo 优化 这里也可以使用string_view
   std::string block_1_max_key = new_block_1.Get().GetMaxKey();
   std::string block_2_max_key = new_block_2.Get().GetMaxKey();
   // 更新本节点的索引
@@ -465,7 +472,7 @@ DeleteInfo Block::DoMerge(uint32_t child_index, uint64_t sequence) {
     if (next_index != 0) {
       UpdateBlockPrevIndex(next_index, new_block_index, sequence);
     }
-    // 删除过时节点
+    // todo 优化，这里也可以使用string_view
     UpdateByIndex(left_child_index, new_block.Get().GetMaxKey(), ConstructIndexByNum(new_block_index), sequence);
     DeleteKvByIndex(right_child_index, sequence);
     left_child.UnBind();
@@ -481,6 +488,7 @@ DeleteInfo Block::DoMerge(uint32_t child_index, uint64_t sequence) {
     } else {
       left_child.Get().MoveLastElementTo(&right_child.Get(), sequence);
     }
+    // todo 优化，这里也可以使用string_view
     auto key_view = UpdateEntryKey(kv_view_[left_child_index].index, left_child.Get().GetMaxKey(), sequence);
     kv_view_[left_child_index].key_view = key_view;
   }

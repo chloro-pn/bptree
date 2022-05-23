@@ -19,8 +19,8 @@ class Metric {
   const double& GetValue() const { return value_; }
 
   void PrintToLog(const std::source_location location = std::source_location::current()) {
-    BPTREE_LOG_INFO("metric name : {}, value : {}, file name : {}, line : {}, function name : {}", metric_name_,
-                     value_, location.file_name(), location.line(), location.function_name());
+    BPTREE_LOG_INFO("metric name : {}, value : {}, file name : {}, line : {}, function name : {}", metric_name_, value_,
+                    location.file_name(), location.line(), location.function_name());
   }
 
   virtual ~Metric() {}
