@@ -163,12 +163,25 @@ class BlockBase {
     return true;
   }
 
+  // 在恢复阶段由于执行wal导致buf更新，但数据还是旧的情况
+  // 和Parse的区别在于：不检测crc
+  void UpdateMeta() noexcept {
+    assert(BufInited() == true);
+    assert(dirty_ == true);
+    uint32_t offset = 0;
+    offset = ::bptree::ParseFromBuf(buf_, crc_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, index_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, height_, offset);
+    UpdateMetaData(offset);
+  }
+
   bool Flush() noexcept;
 
   uint32_t GetUsedSpace() const noexcept { return sizeof(crc_) + sizeof(index_) + sizeof(height_); }
 
   virtual void FlushToBuf(size_t offset) noexcept = 0;
   virtual void ParseFromBuf(size_t offset) noexcept = 0;
+  virtual void UpdateMetaData(size_t offset) noexcept {}
 
   void BufInit() noexcept { buf_init_ = true; }
 
@@ -309,6 +322,16 @@ class Block : public BlockBase {
     }
   }
 
+  void UpdateMetaData(size_t offset) noexcept override {
+    offset = ::bptree::ParseFromBuf(buf_, next_free_index_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, prev_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, next_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, key_size_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, value_size_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, head_entry_, offset);
+    offset = ::bptree::ParseFromBuf(buf_, free_list_, offset);
+  }
+
   void UpdateKvViewByBuf() {
     kv_view_.clear();
     uint32_t entry_index = head_entry_;
@@ -341,6 +364,8 @@ class Block : public BlockBase {
   std::string CreateMetaChangeWalLog(const std::string& meta_name, uint32_t value);
 
   std::string CreateDataChangeWalLog(uint32_t offset, const std::string& change_region);
+
+  std::string CreateDataView();
 
  private:
   uint32_t next_free_index_;
@@ -488,7 +513,17 @@ class Block : public BlockBase {
   bool InsertKv(const std::pair<std::string, std::string>& kv, uint64_t sequence) noexcept {
     InsertKv(kv.first, kv.second, sequence);
   }
+/*
+  bool AppendKv(const std::string_view& key, const std::string_view& value, uint64_t sequence) noexcept;
 
+  bool AppendKv(const std::string& key, const std::string& value, uint64_t sequence) noexcept {
+    AppendKv(std::string_view(key), std::string_view(value), sequence);
+  }
+
+  bool AppendKv(const std::pair<std::string, std::string>& kv, uint64_t sequence) noexcept {
+    AppendKv(kv.first, kv.second, sequence);
+  }
+*/
   void DeleteKvByIndex(uint32_t index, uint64_t sequence) {
     assert(index < kv_view_.size());
     uint32_t block_index = kv_view_[index].index;
@@ -555,6 +590,8 @@ class Block : public BlockBase {
   void HandleMetaUpdateWal(const std::string& meta_name, uint32_t value);
 
   void HandleDataUpdateWal(uint32_t offset, const std::string& region);
+
+  void HandleViewWal(const std::string& view);
 };
 
 class SuperBlock : public BlockBase {

@@ -42,9 +42,11 @@ void BlockBase::SetDirty() {
 
 void Block::SetNextFreeIndex(uint32_t nfi, uint64_t sequence) noexcept {
   BPTREE_LOG_DEBUG("block {} set next free index from {} to {}", GetIndex(), next_free_index_, nfi);
-  std::string redo_log = CreateMetaChangeWalLog("next_free_index", nfi);
-  std::string undo_log = CreateMetaChangeWalLog("next_free_index", next_free_index_);
-  manager_.wal_.WriteLog(sequence, redo_log, undo_log);
+  if (sequence != no_wal_sequence) {
+    std::string redo_log = CreateMetaChangeWalLog("next_free_index", nfi);
+    std::string undo_log = CreateMetaChangeWalLog("next_free_index", next_free_index_);
+    manager_.wal_.WriteLog(sequence, redo_log, undo_log);
+  }
   SetDirty();
   next_free_index_ = nfi;
 }
@@ -219,10 +221,14 @@ bool Block::Update(const std::string& key, const std::function<void(char* const 
       // const_cast只能修改底层const
       char* const ptr = const_cast<char* const>(it->value_view.data());
       size_t len = it->value_view.size();
-      std::string undo_log = CreateDataChangeWalLog(GetOffsetByEntryIndex(it->index), std::string(ptr, len));
-      updator(ptr, len);
-      std::string redo_log = CreateDataChangeWalLog(GetOffsetByEntryIndex(it->index), std::string(ptr, len));
-      manager_.wal_.WriteLog(sequence, redo_log, undo_log);
+      if (sequence != no_wal_sequence) {
+        std::string undo_log = CreateDataChangeWalLog(GetOffsetByEntryIndex(it->index), std::string(ptr, len));
+        updator(ptr, len);
+        std::string redo_log = CreateDataChangeWalLog(GetOffsetByEntryIndex(it->index), std::string(ptr, len));
+        manager_.wal_.WriteLog(sequence, redo_log, undo_log);
+      } else {
+        updator(ptr, len);
+      }
       SetDirty();
       BPTREE_LOG_DEBUG("update key {} in block {} succ", key, GetIndex());
       return true;
@@ -299,45 +305,55 @@ void Block::Print() {
 
 void Block::SetPrev(uint32_t prev, uint64_t sequence) noexcept {
   BPTREE_LOG_DEBUG("block {} set prev from {} to {}", GetIndex(), prev_, prev);
-  std::string redo_log = CreateMetaChangeWalLog("prev", prev);
-  std::string undo_log = CreateMetaChangeWalLog("prev", prev_);
-  manager_.wal_.WriteLog(sequence, redo_log, undo_log);
+  if (sequence != no_wal_sequence) {
+    std::string redo_log = CreateMetaChangeWalLog("prev", prev);
+    std::string undo_log = CreateMetaChangeWalLog("prev", prev_);
+    manager_.wal_.WriteLog(sequence, redo_log, undo_log);
+  }
   prev_ = prev;
   SetDirty();
 }
 
 void Block::SetNext(uint32_t next, uint64_t sequence) noexcept {
   BPTREE_LOG_DEBUG("block {} set next from {} to {}", GetIndex(), next_, next);
-  std::string redo_log = CreateMetaChangeWalLog("next", next);
-  std::string undo_log = CreateMetaChangeWalLog("next", next_);
-  manager_.wal_.WriteLog(sequence, redo_log, undo_log);
+  if (sequence != no_wal_sequence) {
+    std::string redo_log = CreateMetaChangeWalLog("next", next);
+    std::string undo_log = CreateMetaChangeWalLog("next", next_);
+    manager_.wal_.WriteLog(sequence, redo_log, undo_log);
+  }
   next_ = next;
   SetDirty();
 }
 
 void Block::SetHeight(uint32_t height, uint64_t sequence) noexcept {
   BPTREE_LOG_DEBUG("block {} set height from {} to {}", GetIndex(), getHeight(), height);
-  std::string redo_log = CreateMetaChangeWalLog("height", height);
-  std::string undo_log = CreateMetaChangeWalLog("height", GetHeight());
-  manager_.wal_.WriteLog(sequence, redo_log, undo_log);
-  SetDirty();
+  if (sequence != no_wal_sequence) {
+    std::string redo_log = CreateMetaChangeWalLog("height", height);
+    std::string undo_log = CreateMetaChangeWalLog("height", GetHeight());
+    manager_.wal_.WriteLog(sequence, redo_log, undo_log);
+  }
   getHeight() = height;
+  SetDirty();
 }
 
 void Block::SetHeadEntry(uint32_t entry, uint64_t sequence) noexcept {
   BPTREE_LOG_DEBUG("block {} set head entry from {} to {}", GetIndex(), head_entry_, entry);
-  std::string redo_log = CreateMetaChangeWalLog("head_entry", entry);
-  std::string undo_log = CreateMetaChangeWalLog("head_entry", head_entry_);
-  manager_.wal_.WriteLog(sequence, redo_log, undo_log);
+  if (sequence != no_wal_sequence) {
+    std::string redo_log = CreateMetaChangeWalLog("head_entry", entry);
+    std::string undo_log = CreateMetaChangeWalLog("head_entry", head_entry_);
+    manager_.wal_.WriteLog(sequence, redo_log, undo_log);
+  }
   head_entry_ = entry;
   SetDirty();
 }
 
 void Block::SetFreeList(uint32_t free_list, uint64_t sequence) noexcept {
   BPTREE_LOG_DEBUG("block {} set free_list from {} to {}", GetIndex(), free_list_, free_list);
-  std::string redo_log = CreateMetaChangeWalLog("free_list", free_list);
-  std::string undo_log = CreateMetaChangeWalLog("free_list", free_list_);
-  manager_.wal_.WriteLog(sequence, redo_log, undo_log);
+  if (sequence != no_wal_sequence) {
+    std::string redo_log = CreateMetaChangeWalLog("free_list", free_list);
+    std::string undo_log = CreateMetaChangeWalLog("free_list", free_list_);
+    manager_.wal_.WriteLog(sequence, redo_log, undo_log);
+  }
   free_list_ = free_list;
   SetDirty();
 }
@@ -358,6 +374,17 @@ std::string Block::CreateDataChangeWalLog(uint32_t offset, const std::string& ch
   util::StringAppender(result, offset);
   util::StringAppender(result, change_region);
   return result;
+}
+
+std::string Block::CreateDataView() {
+  // 因为要生成此刻的视图，因此需要将可能改变的元数据刷到buf中，同时修改dirty_ 为 false
+  // 这样会导致后面cache置换block的时候认为这个块不需要刷盘，因此这里在Flush之后手动把dirty设置为true
+  bool dirty = Flush();
+  if (dirty == true) {
+    dirty_ = true;
+  }
+  std::string block_view = std::string((const char*)&buf_[0], block_size);
+  return block_view;
 }
 
 void Block::MoveFirstElementTo(Block* other, uint64_t sequence) {
@@ -525,13 +552,24 @@ void Block::HandleDataUpdateWal(uint32_t offset, const std::string& region) {
   memcpy(&GetBuf()[offset], region.data(), region.size());
 }
 
+void Block::HandleViewWal(const std::string& view) {
+  SetDirty();
+  assert(view.size() == block_size);
+  memcpy(&GetBuf()[0], view.data(), view.size());
+  BufInit();
+  // 需要重新解析元数据
+  UpdateMeta();
+}
+
 void Block::SetEntryNext(uint32_t index, uint32_t next, uint64_t sequence) noexcept {
   SetDirty();
   uint32_t offset = GetOffsetByEntryIndex(index);
   assert(offset + sizeof(next) <= block_size);
-  std::string redo_log((const char*)&next, sizeof(next));
-  std::string undo_log((const char*)&buf_[offset], sizeof(next));
-  manager_.wal_.WriteLog(sequence, CreateDataChangeWalLog(offset, redo_log), CreateDataChangeWalLog(offset, undo_log));
+  if (sequence != no_wal_sequence) {
+    std::string redo_log((const char*)&next, sizeof(next));
+    std::string undo_log((const char*)&buf_[offset], sizeof(next));
+    manager_.wal_.WriteLog(sequence, CreateDataChangeWalLog(offset, redo_log), CreateDataChangeWalLog(offset, undo_log));
+  }
   memcpy(&buf_[offset], &next, sizeof(next));
 }
 
@@ -539,10 +577,12 @@ std::string_view Block::SetEntryKey(uint32_t offset, const std::string& key, uin
   SetDirty();
   assert(key.size() == key_size_);
   uint32_t key_offset = offset + sizeof(uint32_t);
-  std::string undo_log((const char*)&buf_[key_offset], key_size_);
-  std::string redo_log = key;
-  manager_.wal_.WriteLog(sequence, CreateDataChangeWalLog(key_offset, redo_log),
+  if (sequence != no_wal_sequence) {
+    std::string undo_log((const char*)&buf_[key_offset], key_size_);
+    std::string redo_log = key;
+    manager_.wal_.WriteLog(sequence, CreateDataChangeWalLog(key_offset, redo_log),
                          CreateDataChangeWalLog(key_offset, undo_log));
+  }
   memcpy(&buf_[key_offset], key.data(), key_size_);
   return std::string_view((const char*)&buf_[key_offset], static_cast<size_t>(key_size_));
 }
@@ -551,11 +591,13 @@ std::string_view Block::SetEntryValue(uint32_t offset, const std::string& value,
   SetDirty();
   assert(value.size() == value_size_);
   uint32_t value_offset = offset + sizeof(uint32_t) + key_size_;
-  std::string undo_log((const char*)&buf_[value_offset], value_size_);
-  std::string redo_log = value;
-  // 修改数据的同时将修改处的新值和旧值写入sequence标识的wal日志中
-  manager_.wal_.WriteLog(sequence, CreateDataChangeWalLog(value_offset, redo_log),
+  if (sequence != no_wal_sequence) {
+    std::string undo_log((const char*)&buf_[value_offset], value_size_);
+    std::string redo_log = value;
+    // 修改数据的同时将修改处的新值和旧值写入sequence标识的wal日志中
+    manager_.wal_.WriteLog(sequence, CreateDataChangeWalLog(value_offset, redo_log),
                          CreateDataChangeWalLog(value_offset, undo_log));
+  }
   memcpy(&buf_[value_offset], value.data(), value_size_);
   return std::string_view((const char*)&buf_[value_offset], static_cast<size_t>(value_size_));
 }
@@ -575,26 +617,32 @@ std::string SuperBlock::CreateMetaChangeWalLog(const std::string& meta_name, uin
 
 void SuperBlock::SetCurrentMaxBlockIndex(uint32_t value, uint64_t sequence) {
   BPTREE_LOG_DEBUG("super block set current_max_block_index from {} to {}", current_max_block_index_, value);
-  std::string redo_log = CreateMetaChangeWalLog("current_max_block_index", value);
-  std::string undo_log = CreateMetaChangeWalLog("current_max_block_index", current_max_block_index_);
+  if (sequence != no_wal_sequence) {
+    std::string redo_log = CreateMetaChangeWalLog("current_max_block_index", value);
+    std::string undo_log = CreateMetaChangeWalLog("current_max_block_index", current_max_block_index_);
+    manager_.GetWal().WriteLog(sequence, redo_log, undo_log);
+  }
   current_max_block_index_ = value;
-  manager_.GetWal().WriteLog(sequence, redo_log, undo_log);
 }
 
 void SuperBlock::SetFreeBlockHead(uint32_t value, uint64_t sequence) {
   BPTREE_LOG_DEBUG("super block set free_block_head from {} to {}", free_block_head_, value);
-  std::string redo_log = CreateMetaChangeWalLog("free_block_head", value);
-  std::string undo_log = CreateMetaChangeWalLog("free_block_head", free_block_head_);
+  if (sequence != no_wal_sequence) {
+    std::string redo_log = CreateMetaChangeWalLog("free_block_head", value);
+    std::string undo_log = CreateMetaChangeWalLog("free_block_head", free_block_head_);
+    manager_.GetWal().WriteLog(sequence, redo_log, undo_log);
+  }
   free_block_head_ = value;
-  manager_.GetWal().WriteLog(sequence, redo_log, undo_log);
 }
 
 void SuperBlock::SetFreeBlockSize(uint32_t value, uint64_t sequence) {
   BPTREE_LOG_DEBUG("super block set free block size from {} to {}", free_block_size_, value);
-  std::string redo_log = CreateMetaChangeWalLog("free_block_size", value);
-  std::string undo_log = CreateMetaChangeWalLog("free_block_size", free_block_size_);
+  if (sequence != no_wal_sequence) {
+    std::string redo_log = CreateMetaChangeWalLog("free_block_size", value);
+    std::string undo_log = CreateMetaChangeWalLog("free_block_size", free_block_size_);
+    manager_.GetWal().WriteLog(sequence, redo_log, undo_log);
+  }
   free_block_size_ = value;
-  manager_.GetWal().WriteLog(sequence, redo_log, undo_log);
 }
 
 }  // namespace bptree
