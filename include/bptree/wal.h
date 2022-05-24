@@ -97,18 +97,14 @@ class WriteAheadLog {
     uint32_t length = sizeof(sequence) + sizeof(type) + redo_log.size() + undo_log.size() + 2 * sizeof(uint32_t) +
                       sizeof(log_number) + sizeof(uint32_t);
     std::string result;
-    result.append((const char*)&length, sizeof(length));
-    result.append((const char*)&sequence, sizeof(sequence));
-    result.append((const char*)&type, sizeof(type));
-    uint32_t log_length = redo_log.size();
-    result.append((const char*)&log_length, sizeof(log_length));
-    result.append(redo_log);
-    log_length = undo_log.size();
-    result.append((const char*)&log_length, sizeof(log_length));
-    result.append(undo_log);
-    result.append((const char*)&log_number, sizeof(log_number));
+    util::StringAppender(result, length);
+    util::StringAppender(result, sequence);
+    util::StringAppender(result, type);
+    util::StringAppender(result, redo_log);
+    util::StringAppender(result, undo_log);
+    util::StringAppender(result, log_number);
     uint32_t crc = crc32(&result[sizeof(length)], result.size() - sizeof(length));
-    result.append((const char*)&crc, sizeof(crc));
+    util::StringAppender(result, crc);
     util::FileAppend(f_, result.data(), result.size());
   }
 
@@ -240,23 +236,11 @@ class WriteAheadLog {
     }
     entry.crc = crc;
     size_t offset = 0;
-    memcpy(&entry.sequence, &buf[offset], sizeof(entry.sequence));
-    offset += sizeof(entry.sequence);
-    memcpy(&entry.type, &buf[offset], sizeof(entry.type));
-    offset += sizeof(entry.type);
-    uint32_t log_length = 0;
-    memcpy(&log_length, &buf[offset], sizeof(log_length));
-    offset += sizeof(log_length);
-    entry.redo_log = std::string(&buf[offset], log_length);
-    offset += log_length;
-
-    memcpy(&log_length, &buf[offset], sizeof(log_length));
-    offset += sizeof(log_length);
-    entry.undo_log = std::string(&buf[offset], log_length);
-    offset += log_length;
-
-    memcpy(&entry.log_number, &buf[offset], sizeof(entry.log_number));
-    offset += sizeof(entry.log_number);
+    entry.sequence = util::StringParser<uint64_t>(buf, offset);
+    entry.type = util::StringParser<uint8_t>(buf, offset);
+    entry.redo_log = util::StringParser(buf, offset);
+    entry.undo_log = util::StringParser(buf, offset);
+    entry.log_number = util::StringParser<uint64_t>(buf, offset);
     assert(offset + sizeof(uint32_t) == length);
     return entry;
   }

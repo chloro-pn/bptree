@@ -101,5 +101,6 @@ int main() {
   manager.PrintSuperBlockInfo();
   manager.PrintRootBlock();
   manager.PrintMetricSet();
+  manager.GetFaultInjection().RegisterTheLastWalWriteFailCondition([]() -> bool { return true; });
   return 0;
 }
