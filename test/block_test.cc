@@ -89,8 +89,8 @@ TEST(block, constructor) {
   block.UpdateEntryValue(block.head_entry_, std::string(value_v), bptree::no_wal_sequence);
   EXPECT_EQ(value_v, block.Get("c"));
 
-  block.SetEntryKey(offset, "d", bptree::no_wal_sequence);
-  block.SetEntryValue(offset, "newvv", bptree::no_wal_sequence);
+  block.SetEntryKey(offset, std::string("d"), bptree::no_wal_sequence);
+  block.SetEntryValue(offset, std::string("newvv"), bptree::no_wal_sequence);
   key = "";
   value_v = "";
   index = block.ParseEntry(block.head_entry_, key, value_v);
@@ -99,7 +99,7 @@ TEST(block, constructor) {
   EXPECT_EQ(index, 0);
 
   bool full = false;
-  auto entry = block.InsertEntry(block.head_entry_, "e", "value", full, bptree::no_wal_sequence);
+  auto entry = block.InsertEntry(block.head_entry_, std::string("e"), std::string("value"), full, bptree::no_wal_sequence);
   EXPECT_EQ(full, false);
   EXPECT_EQ(block.GetEntryNext(offset), entry.index);
   EXPECT_EQ(block.GetEntryNext(block.GetOffsetByEntryIndex(entry.index)), 0);

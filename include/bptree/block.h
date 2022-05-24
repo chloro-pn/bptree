@@ -425,16 +425,24 @@ class Block : public BlockBase {
     return result;
   }
 
+  std::string_view SetEntryKey(uint32_t offset, const std::string& key, uint64_t sequence) noexcept {
+    return SetEntryKey(offset, std::string_view(key), sequence);
+  }  
+
   // tested
-  std::string_view SetEntryKey(uint32_t offset, const std::string& key, uint64_t sequence) noexcept;
+  std::string_view SetEntryKey(uint32_t offset, const std::string_view& key, uint64_t sequence) noexcept;
 
   // tested
   std::string_view GetEntryKeyView(uint32_t offset) const noexcept {
     return std::string_view((const char*)&buf_[offset + sizeof(uint32_t)], static_cast<size_t>(key_size_));
   }
 
+  std::string_view SetEntryValue(uint32_t offset, const std::string& value, uint64_t sequence) noexcept {
+    return SetEntryValue(offset, std::string_view(value), sequence);
+  }
+
   // tested
-  std::string_view SetEntryValue(uint32_t offset, const std::string& value, uint64_t sequence) noexcept;
+  std::string_view SetEntryValue(uint32_t offset, const std::string_view& value, uint64_t sequence) noexcept;
 
   // tested
   std::string_view GetEntryValueView(uint32_t offset) const noexcept {
@@ -462,8 +470,12 @@ class Block : public BlockBase {
     SetFreeList(index, sequence);
   }
 
+  Entry InsertEntry(uint32_t prev_index, const std::string& key, const std::string& value, bool& full, uint64_t sequence) noexcept {
+    return InsertEntry(prev_index, std::string_view(key), std::string_view(value), full, sequence);
+  }
+
   // tested
-  Entry InsertEntry(uint32_t prev_index, const std::string& key, const std::string& value, bool& full,
+  Entry InsertEntry(uint32_t prev_index, const std::string_view& key, const std::string_view& value, bool& full,
                     uint64_t sequence) noexcept {
     if (free_list_ == 0) {
       full = true;
@@ -513,7 +525,7 @@ class Block : public BlockBase {
   bool InsertKv(const std::pair<std::string, std::string>& kv, uint64_t sequence) noexcept {
     InsertKv(kv.first, kv.second, sequence);
   }
-/*
+
   bool AppendKv(const std::string_view& key, const std::string_view& value, uint64_t sequence) noexcept;
 
   bool AppendKv(const std::string& key, const std::string& value, uint64_t sequence) noexcept {
@@ -523,7 +535,7 @@ class Block : public BlockBase {
   bool AppendKv(const std::pair<std::string, std::string>& kv, uint64_t sequence) noexcept {
     AppendKv(kv.first, kv.second, sequence);
   }
-*/
+
   void DeleteKvByIndex(uint32_t index, uint64_t sequence) {
     assert(index < kv_view_.size());
     uint32_t block_index = kv_view_[index].index;

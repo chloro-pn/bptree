@@ -239,8 +239,8 @@ class BlockManager {
       // update root
       old_root.Get().Clear(sequence);
       old_root.Get().SetHeight(old_root_height + 1, sequence);
-      old_root.Get().InsertKv(left_block.Get().GetMaxKey(), ConstructIndexByNum(new_blocks.first), sequence);
-      old_root.Get().InsertKv(right_block.Get().GetMaxKey(), ConstructIndexByNum(new_blocks.second), sequence);
+      old_root.Get().AppendKv(left_block.Get().GetMaxKey(), ConstructIndexByNum(new_blocks.first), sequence);
+      old_root.Get().AppendKv(right_block.Get().GetMaxKey(), ConstructIndexByNum(new_blocks.second), sequence);
       BPTREE_LOG_DEBUG("the insert operation(key = {}, value = {}) caused the root block to split", key, value);
     }
     wal_.End(sequence);
@@ -345,14 +345,14 @@ class BlockManager {
     size_t half_count = block->GetKVView().size() / 2;
     for (size_t i = 0; i < half_count; ++i) {
       bool succ =
-          new_block_1.Get().InsertKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view, no_wal_sequence);
+          new_block_1.Get().AppendKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view, no_wal_sequence);
       if (succ == false) {
         throw BptreeExecption("block broken, insert nth kv : ", std::to_string(i));
       }
     }
     for (int i = half_count; i < block->GetKVView().size(); ++i) {
       bool succ =
-          new_block_2.Get().InsertKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view, no_wal_sequence);
+          new_block_2.Get().AppendKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view, no_wal_sequence);
       if (succ == false) {
         throw BptreeExecption("block broken, insert nth kv : ", std::to_string(i));
       }
@@ -369,18 +369,21 @@ class BlockManager {
   uint32_t BlockMerge(const Block* b1, const Block* b2, uint64_t sequence) {
     uint32_t new_block_index = AllocNewBlock(b1->GetHeight(), sequence);
     auto new_block = GetBlock(new_block_index);
+    std::string block_undo = CreateBlockViewWalLog(new_block_index, new_block.Get().CreateDataView());
     for (size_t i = 0; i < b1->GetKVView().size(); ++i) {
-      bool succ = new_block.Get().InsertKv(b1->GetViewByIndex(i).key_view, b1->GetViewByIndex(i).value_view, sequence);
+      bool succ = new_block.Get().AppendKv(b1->GetViewByIndex(i).key_view, b1->GetViewByIndex(i).value_view, no_wal_sequence);
       if (succ == false) {
         throw BptreeExecption("block broken");
       }
     }
     for (size_t i = 0; i < b2->GetKVView().size(); ++i) {
-      bool succ = new_block.Get().InsertKv(b2->GetViewByIndex(i).key_view, b2->GetViewByIndex(i).value_view, sequence);
+      bool succ = new_block.Get().AppendKv(b2->GetViewByIndex(i).key_view, b2->GetViewByIndex(i).value_view, no_wal_sequence);
       if (succ == false) {
         throw BptreeExecption("block broken");
       }
     }
+    std::string block_redo = CreateBlockViewWalLog(new_block_index, new_block.Get().CreateDataView());
+    wal_.WriteLog(sequence, block_redo, block_undo);
     BPTREE_LOG_DEBUG("block merge, from {} and {} to {}", b1->GetIndex(), b2->GetIndex(), new_block_index);
     return new_block_index;
   }

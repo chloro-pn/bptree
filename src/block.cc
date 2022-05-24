@@ -253,9 +253,9 @@ bool Block::InsertKv(const std::string_view& key, const std::string_view& value,
   bool full = false;
   Entry entry;
   if (prev_index == std::numeric_limits<uint32_t>::max()) {
-    entry = InsertEntry(0, std::string(key), std::string(value), full, sequence);
+    entry = InsertEntry(0, key, value, full, sequence);
   } else {
-    entry = InsertEntry(kv_view_[prev_index].index, std::string(key), std::string(value), full, sequence);
+    entry = InsertEntry(kv_view_[prev_index].index, key, value, full, sequence);
   }
   if (full == true) {
     return false;
@@ -265,6 +265,21 @@ bool Block::InsertKv(const std::string_view& key, const std::string_view& value,
     std::advance(it, prev_index + 1);
   }
   kv_view_.insert(it, entry);
+  return true;
+}
+
+bool Block::AppendKv(const std::string_view& key, const std::string_view& value, uint64_t sequence) noexcept {
+  uint32_t prev_index = 0;
+  if (kv_view_.empty() == false) {
+    prev_index = kv_view_.back().index;
+    assert(manager_.GetComparator().Compare(kv_view_.back().key_view, key) < 0);
+  }
+  bool full = false;
+  Entry entry = InsertEntry(prev_index, key, value, full, sequence);
+  if (full == true) {
+    return false;
+  }
+  kv_view_.push_back(entry);
   return true;
 }
 
@@ -573,13 +588,13 @@ void Block::SetEntryNext(uint32_t index, uint32_t next, uint64_t sequence) noexc
   memcpy(&buf_[offset], &next, sizeof(next));
 }
 
-std::string_view Block::SetEntryKey(uint32_t offset, const std::string& key, uint64_t sequence) noexcept {
+std::string_view Block::SetEntryKey(uint32_t offset, const std::string_view& key, uint64_t sequence) noexcept {
   SetDirty();
   assert(key.size() == key_size_);
   uint32_t key_offset = offset + sizeof(uint32_t);
   if (sequence != no_wal_sequence) {
     std::string undo_log((const char*)&buf_[key_offset], key_size_);
-    std::string redo_log = key;
+    std::string redo_log(key);
     manager_.wal_.WriteLog(sequence, CreateDataChangeWalLog(key_offset, redo_log),
                          CreateDataChangeWalLog(key_offset, undo_log));
   }
@@ -587,13 +602,13 @@ std::string_view Block::SetEntryKey(uint32_t offset, const std::string& key, uin
   return std::string_view((const char*)&buf_[key_offset], static_cast<size_t>(key_size_));
 }
 
-std::string_view Block::SetEntryValue(uint32_t offset, const std::string& value, uint64_t sequence) noexcept {
+std::string_view Block::SetEntryValue(uint32_t offset, const std::string_view& value, uint64_t sequence) noexcept {
   SetDirty();
   assert(value.size() == value_size_);
   uint32_t value_offset = offset + sizeof(uint32_t) + key_size_;
   if (sequence != no_wal_sequence) {
     std::string undo_log((const char*)&buf_[value_offset], value_size_);
-    std::string redo_log = value;
+    std::string redo_log(value);
     // 修改数据的同时将修改处的新值和旧值写入sequence标识的wal日志中
     manager_.wal_.WriteLog(sequence, CreateDataChangeWalLog(value_offset, redo_log),
                          CreateDataChangeWalLog(value_offset, undo_log));
