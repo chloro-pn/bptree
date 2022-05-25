@@ -396,7 +396,7 @@ std::string Block::CreateDataView() {
   // 这样会导致后面cache置换block的时候认为这个块不需要刷盘，因此这里在Flush之后手动把dirty设置为true
   bool dirty = Flush();
   if (dirty == true) {
-    dirty_ = true;
+    SetDirty();
   }
   std::string block_view = std::string((const char*)&buf_[0], block_size);
   return block_view;
