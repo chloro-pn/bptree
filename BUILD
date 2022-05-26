@@ -37,6 +37,12 @@ cc_binary(
   deps = [":bptree"],
 )
 
+cc_binary(
+  name = "block_filling_rate",
+  srcs = ["tool/block_filling_rate.cc"],
+  deps = [":bptree"],
+)
+
 cc_test(
   name = "bptree_test",
   srcs = glob(["test/*.cc"]),

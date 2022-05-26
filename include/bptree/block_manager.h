@@ -332,6 +332,8 @@ class BlockManager {
 
   uint32_t GetRootIndex() const noexcept { return super_block_.root_index_; }
 
+  uint32_t GetMaxBlockIndex() const noexcept { return super_block_.current_max_block_index_; }
+  
  private:
   // todo 优化，这里的kv顺序是已知的，可以使用AppendKv之类的接口，InsertKv内部还要进行查找和排序。
   std::pair<uint32_t, uint32_t> BlockSplit(const Block* block, uint64_t sequence) {
