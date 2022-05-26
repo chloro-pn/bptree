@@ -132,15 +132,6 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value, uint6
     }
     return DoSplit(child_index, info.key_, info.value_, sequence);
   } else {
-    auto it = std::find_if(kv_view_.begin(), kv_view_.end(), [&](const Entry& n) -> bool {
-      return this->manager_.GetComparator().Compare(n.key_view, std::string_view(key)) == 0;
-    });
-    if (it != kv_view_.end()) {
-      UpdateEntryValue(it->index, value, sequence);
-      BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {}, the key already exists, update value", key, value,
-                       GetIndex());
-      return InsertInfo::Ok();
-    }
     bool succ = InsertKv(key, value, sequence);
     if (succ == false) {
       BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {} results in a split", key, value, GetIndex());
