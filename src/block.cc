@@ -105,9 +105,9 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value, uint6
     if (kv_view_.empty() == true) {
       uint32_t child_block_index = manager_.AllocNewBlock(GetHeight() - 1, sequence);
       manager_.GetBlock(child_block_index).Get().Insert(key, value, sequence);
-      bool succ = InsertKv(key, ConstructIndexByNum(child_block_index), sequence);
+      auto ret = InsertKv(key, ConstructIndexByNum(child_block_index), sequence);
       // 只插入一个元素，不应该失败
-      assert(succ == true);
+      assert(ret == InsertResult::SUCC);
       BPTREE_LOG_DEBUG("insert ({}, {}) to a new block {}", key, value,
                        manager_.GetBlock(child_block_index).Get().GetIndex());
       return InsertInfo::Ok();
@@ -126,20 +126,26 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value, uint6
     }
     uint32_t child_block_index = GetChildIndex(child_index);
     InsertInfo info = manager_.GetBlock(child_block_index).Get().Insert(key, value, sequence);
+    // 如果插入结果是成功或者发现key已存在，返回结果
     if (info.state_ == InsertInfo::State::Ok) {
       BPTREE_LOG_DEBUG("insert ({}, {}) to inner block {}, no split", key, value, GetIndex());
+      return info;
+    } else if (info.state_ == InsertInfo::State::Invalid) {
+      BPTREE_LOG_DEBUG("insert ({}, {}) to inner block {}, key exist", key, value, GetIndex());
       return info;
     }
     return DoSplit(child_index, info.key_, info.value_, sequence);
   } else {
-    bool succ = InsertKv(key, value, sequence);
-    if (succ == false) {
+    auto ret = InsertKv(key, value, sequence);
+    if (ret == InsertResult::FULL) {
       BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {} results in a split", key, value, GetIndex());
       return InsertInfo::Split(key, value);
-    } else {
-      BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {} succ, no split", key, value, GetIndex());
-      return InsertInfo::Ok();
+    } else if (ret == InsertResult::EXIST) {
+      BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {} fail, key exist", key, value, GetIndex());
+      return InsertInfo::Exist();
     }
+    BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {} succ, no split", key, value, GetIndex());
+    return InsertInfo::Ok();
   }
   InsertInfo obj;
   obj.state_ = InsertInfo::State::Invalid;
@@ -153,29 +159,34 @@ DeleteInfo Block::Delete(const std::string& key, uint64_t sequence) {
       if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) >= 0) {
         auto block = manager_.GetBlock(GetChildIndex(i));
         DeleteInfo info = block.Get().Delete(key, sequence);
-        assert(info.state_ != DeleteInfo::State::Invalid);
         if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) == 0 &&
             block.Get().GetKVView().size() != 0) {
           // 更新maxkey的记录，如果子节点block的kv为空不需要处理，因为后面会在DoMerge中删除这个节点
+          assert(info.state_ != DeleteInfo::State::Invalid);
           BPTREE_LOG_DEBUG("update inner block {}'s key because of delete, key == {}", GetIndex(), key);
           UpdateEntryKey(kv_view_[i].index, block.Get().GetMaxKey(), sequence);
         }
         if (info.state_ == DeleteInfo::State::Ok) {
           BPTREE_LOG_DEBUG("delete key {} from inner block {}, no merge", key, block.Get().GetIndex());
           return info;
+        } else if (info.state_ == DeleteInfo::State::Invalid) {
+          BPTREE_LOG_DEBUG("delete key {} from inner block {} fail, key not exist", key, block.Get().GetIndex());
+          return info;
         } else {
           block.UnBind();
           // do merge.
-          return DoMerge(i, sequence);
+          return DoMerge(i, sequence, info.old_v_);
         }
       }
     }
     // 不存在这个key
     BPTREE_LOG_DEBUG("delete the key {} that is not exist", key);
-    return DeleteInfo::Ok();
+    return DeleteInfo::Invalid();
   } else {
+    std::string old_v;
     for (auto it = kv_view_.begin(); it != kv_view_.end(); ++it) {
       if (manager_.GetComparator().Compare(it->key_view, std::string_view(key)) == 0) {
+        old_v = it->value_view;
         RemoveEntry(it->index, it == kv_view_.begin() ? 0 : (it - 1)->index, sequence);
         kv_view_.erase(it);
         break;
@@ -183,58 +194,45 @@ DeleteInfo Block::Delete(const std::string& key, uint64_t sequence) {
     }
     if (CheckIfNeedToMerge() == true) {
       BPTREE_LOG_DEBUG("delete key {} from leaf block {} results in merge", key, GetIndex());
-      return DeleteInfo::Merge();
+      return DeleteInfo::Merge(old_v);
     } else {
       BPTREE_LOG_DEBUG("delete key {} from leaf block {} succ, no merge", key, GetIndex())
-      return DeleteInfo::Ok();
+      return DeleteInfo::Ok(old_v);
     }
   }
-  DeleteInfo obj;
-  obj.state_ = DeleteInfo::State::Invalid;
-  return obj;
+  return DeleteInfo::Invalid();
 }
 
-bool Block::Update(const std::string& key, const std::function<void(char* const ptr, size_t len)>& updator,
-                   uint64_t sequence) {
+UpdateInfo Block::Update(const std::string& key, const std::string& value, uint64_t sequence) {
   assert(GetHeight() != super_height);
   if (GetHeight() > 0) {
     for (size_t i = 0; i < kv_view_.size(); ++i) {
       if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) >= 0) {
-        return manager_.GetBlock(GetChildIndex(i)).Get().Update(key, updator, sequence);
+        return manager_.GetBlock(GetChildIndex(i)).Get().Update(key, value, sequence);
       }
     }
-    return false;
+    return UpdateInfo::Invalid();
   } else {
     auto it = std::find_if(kv_view_.begin(), kv_view_.end(), [&](const Entry& n) -> bool {
       return this->manager_.GetComparator().Compare(n.key_view, std::string_view(key)) == 0;
     });
     if (it != kv_view_.end()) {
-      // const_cast只能修改底层const
-      char* const ptr = const_cast<char* const>(it->value_view.data());
-      size_t len = it->value_view.size();
-      if (sequence != no_wal_sequence) {
-        std::string undo_log = CreateDataChangeWalLog(GetOffsetByEntryIndex(it->index), std::string(ptr, len));
-        updator(ptr, len);
-        std::string redo_log = CreateDataChangeWalLog(GetOffsetByEntryIndex(it->index), std::string(ptr, len));
-        manager_.wal_.WriteLog(sequence, redo_log, undo_log);
-      } else {
-        updator(ptr, len);
-      }
-      SetDirty();
+      std::string old_v(it->value_view);
+      it->value_view = UpdateEntryValue(it->index, value, sequence);
       BPTREE_LOG_DEBUG("update key {} in block {} succ", key, GetIndex());
-      return true;
+      return UpdateInfo::Ok(old_v);
     }
   }
-  return false;
+  return UpdateInfo::Invalid();
 }
 
 // todo 优化，std::lower_bound不能使用在这里，需要自己实现
-bool Block::InsertKv(const std::string_view& key, const std::string_view& value, uint64_t sequence) noexcept {
+Block::InsertResult Block::InsertKv(const std::string_view& key, const std::string_view& value,
+                                    uint64_t sequence) noexcept {
   uint32_t prev_index = std::numeric_limits<uint32_t>::max();
   for (size_t i = 0; i < kv_view_.size(); ++i) {
     if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) == 0) {
-      UpdateEntryValue(kv_view_[i].index, std::string(value), sequence);
-      return true;
+      return InsertResult::EXIST;
     } else if (manager_.GetComparator().Compare(kv_view_[i].key_view, std::string_view(key)) > 0) {
       break;
     } else {
@@ -249,14 +247,14 @@ bool Block::InsertKv(const std::string_view& key, const std::string_view& value,
     entry = InsertEntry(kv_view_[prev_index].index, key, value, full, sequence);
   }
   if (full == true) {
-    return false;
+    return InsertResult::FULL;
   }
   auto it = kv_view_.begin();
   if (prev_index != std::numeric_limits<uint32_t>::max()) {
     std::advance(it, prev_index + 1);
   }
   kv_view_.insert(it, entry);
-  return true;
+  return InsertResult::SUCC;
 }
 
 bool Block::AppendKv(const std::string_view& key, const std::string_view& value, uint64_t sequence) noexcept {
@@ -397,7 +395,8 @@ void Block::MoveFirstElementTo(Block* other, uint64_t sequence) {
   BPTREE_LOG_DEBUG("block {} move first element to {}", GetIndex(), other->GetIndex());
   assert(kv_view_.empty() == false);
   uint32_t move_index = kv_view_[0].index;
-  other->InsertKv(kv_view_[0].key_view, kv_view_[0].value_view, sequence);
+  auto ret = other->InsertKv(kv_view_[0].key_view, kv_view_[0].value_view, sequence);
+  assert(ret == InsertResult::SUCC);
   RemoveEntry(move_index, 0, sequence);
   kv_view_.erase(kv_view_.begin());
 }
@@ -407,7 +406,8 @@ void Block::MoveLastElementTo(Block* other, uint64_t sequence) {
   assert(kv_view_.empty() == false);
   uint32_t size = kv_view_.size();
   uint32_t move_index = kv_view_.back().index;
-  other->InsertKv(kv_view_.back().key_view, kv_view_.back().value_view, sequence);
+  auto ret = other->InsertKv(kv_view_.back().key_view, kv_view_.back().value_view, sequence);
+  assert(ret == InsertResult::SUCC);
   RemoveEntry(move_index, size == 1 ? 0 : kv_view_[size - 2].index, sequence);
   kv_view_.pop_back();
 }
@@ -442,27 +442,32 @@ InsertInfo Block::DoSplit(uint32_t child_index, const std::string& key, const st
   // 删除过时节点
   manager_.DeallocBlock(block_index, sequence, false);
   // 将key和value插入到新的节点中
+  // 首先，这里不应该出现重复key的问题，如果出现则在叶子节点应该已经返回了重复key
+  // 其次，这里不应该出现kv满的问题，因为是一个节点split得到的
+  // 所以，只可能是插入成功
   if (manager_.GetComparator().Compare(std::string_view(key), new_block_1.Get().GetMaxKeyAsView()) <= 0) {
-    bool succ = new_block_1.Get().InsertKv(key, value, sequence);
-    assert(succ == true);
+    auto ret = new_block_1.Get().InsertKv(key, value, sequence);
+    assert(ret == InsertResult::SUCC);
   } else {
-    bool succ = new_block_2.Get().InsertKv(key, value, sequence);
-    assert(succ == true);
+    auto ret = new_block_2.Get().InsertKv(key, value, sequence);
+    assert(ret == InsertResult::SUCC);
   }
   // todo 优化 这里也可以使用string_view
   std::string block_1_max_key = new_block_1.Get().GetMaxKey();
   std::string block_2_max_key = new_block_2.Get().GetMaxKey();
   // 更新本节点的索引
   UpdateByIndex(child_index, block_1_max_key, ConstructIndexByNum(new_block_1_index), sequence);
-  bool succ = InsertKv(block_2_max_key, ConstructIndexByNum(new_block_2_index), sequence);
+  auto ret = InsertKv(block_2_max_key, ConstructIndexByNum(new_block_2_index), sequence);
   BPTREE_LOG_DEBUG("block split from {} to {} and {}", block_index, new_block_1_index, new_block_2_index);
-  if (succ == false) {
+  if (ret == InsertResult::FULL) {
     return InsertInfo::Split(block_2_max_key, ConstructIndexByNum(new_block_2_index));
   }
+  // 对于非叶子节点的索引更新操作，不应该出现重复key现象
+  assert(ret == InsertResult::SUCC);
   return InsertInfo::Ok();
 }
 
-DeleteInfo Block::DoMerge(uint32_t child_index, uint64_t sequence) {
+DeleteInfo Block::DoMerge(uint32_t child_index, uint64_t sequence, const std::string& old_v) {
   assert(GetHeight() > 0);
   uint32_t child_block_index = GetChildIndex(child_index);
   auto child = manager_.GetBlock(child_block_index);
@@ -473,7 +478,7 @@ DeleteInfo Block::DoMerge(uint32_t child_index, uint64_t sequence) {
     kv_view_.clear();
     child.UnBind();
     manager_.DeallocBlock(child_block_index, sequence);
-    return DeleteInfo::Merge();
+    return DeleteInfo::Merge(old_v);
   }
   child.UnBind();
   // 分别向相邻节点借child过来，如果相邻节点都不能借，则合并节点。
@@ -487,7 +492,7 @@ DeleteInfo Block::DoMerge(uint32_t child_index, uint64_t sequence) {
     right_child_index = child_index + 1;
   } else {
     // 只有一个子节点, 直接返回
-    return DeleteInfo::Ok();
+    return DeleteInfo::Ok(old_v);
   }
   uint32_t left_block_index = GetChildIndex(left_child_index);
   uint32_t right_block_index = GetChildIndex(right_child_index);
@@ -527,9 +532,9 @@ DeleteInfo Block::DoMerge(uint32_t child_index, uint64_t sequence) {
   }
   // 判断经过删除后，本节点是否需要merge，并将判断情况交给父节点处理
   if (CheckIfNeedToMerge()) {
-    return DeleteInfo::Merge();
+    return DeleteInfo::Merge(old_v);
   } else {
-    return DeleteInfo::Ok();
+    return DeleteInfo::Ok(old_v);
   }
 }
 
@@ -574,7 +579,8 @@ void Block::SetEntryNext(uint32_t index, uint32_t next, uint64_t sequence) noexc
   if (sequence != no_wal_sequence) {
     std::string redo_log((const char*)&next, sizeof(next));
     std::string undo_log((const char*)&buf_[offset], sizeof(next));
-    manager_.wal_.WriteLog(sequence, CreateDataChangeWalLog(offset, redo_log), CreateDataChangeWalLog(offset, undo_log));
+    manager_.wal_.WriteLog(sequence, CreateDataChangeWalLog(offset, redo_log),
+                           CreateDataChangeWalLog(offset, undo_log));
   }
   memcpy(&buf_[offset], &next, sizeof(next));
 }
@@ -587,7 +593,7 @@ std::string_view Block::SetEntryKey(uint32_t offset, const std::string_view& key
     std::string undo_log((const char*)&buf_[key_offset], key_size_);
     std::string redo_log(key);
     manager_.wal_.WriteLog(sequence, CreateDataChangeWalLog(key_offset, redo_log),
-                         CreateDataChangeWalLog(key_offset, undo_log));
+                           CreateDataChangeWalLog(key_offset, undo_log));
   }
   memcpy(&buf_[key_offset], key.data(), key_size_);
   return std::string_view((const char*)&buf_[key_offset], static_cast<size_t>(key_size_));
@@ -602,7 +608,7 @@ std::string_view Block::SetEntryValue(uint32_t offset, const std::string_view& v
     std::string redo_log(value);
     // 修改数据的同时将修改处的新值和旧值写入sequence标识的wal日志中
     manager_.wal_.WriteLog(sequence, CreateDataChangeWalLog(value_offset, redo_log),
-                         CreateDataChangeWalLog(value_offset, undo_log));
+                           CreateDataChangeWalLog(value_offset, undo_log));
   }
   memcpy(&buf_[value_offset], value.data(), value_size_);
   return std::string_view((const char*)&buf_[value_offset], static_cast<size_t>(value_size_));

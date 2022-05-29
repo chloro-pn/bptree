@@ -11,13 +11,14 @@ bptree是一个持久化到磁盘的b+树实现
 * 支持Get、Delete、Insert、Update和GetRange等接口
 * 基于更新日志记录的恢复机制
 * tool目录下面提供了两个工具，分别用来根据key查找其所在的block index（如果存在的话），以及根据block index打印详细信息等功能
+* check point
 
 目前正在实现的特性有：
 * 完善单元测试 [doing]
 * 实现监控和统计模块，增强bptree的可观测性 [doing]
-* check point [doing]
 * 日志缓冲区 [todo]
 * 并发控制 [todo]
+* 实现事务undo日志 [doing]
 
 ## build ##
 在构建之前确保你的编译环境支持c++20标准

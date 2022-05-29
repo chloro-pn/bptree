@@ -99,7 +99,8 @@ TEST(block, constructor) {
   EXPECT_EQ(index, 0);
 
   bool full = false;
-  auto entry = block.InsertEntry(block.head_entry_, std::string("e"), std::string("value"), full, bptree::no_wal_sequence);
+  auto entry =
+      block.InsertEntry(block.head_entry_, std::string("e"), std::string("value"), full, bptree::no_wal_sequence);
   EXPECT_EQ(full, false);
   EXPECT_EQ(block.GetEntryNext(offset), entry.index);
   EXPECT_EQ(block.GetEntryNext(block.GetOffsetByEntryIndex(entry.index)), 0);

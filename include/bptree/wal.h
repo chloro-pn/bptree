@@ -19,8 +19,6 @@
 
 namespace bptree {
 
-constexpr uint64_t no_wal_sequence = std::numeric_limits<uint64_t>::max();
-
 enum class MsgType : uint8_t {
   Redo,
   Undo,

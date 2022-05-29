@@ -22,8 +22,6 @@
 #include "bptree/util.h"
 #include "bptree/wal.h"
 
-#define BPTREE_INTERFACE
-
 namespace bptree {
 
 constexpr uint32_t bit_map_size = 1024;
@@ -205,20 +203,25 @@ class BlockManager {
     return result;
   }
 
-  // 插入，如果key已经存在于db中，执行更新操作
-  // insert流程中任何涉及到数据修改的地方都需要使用wal日志记录，包括：
-  // BlockSplit、修改链接关系、InsertKv操作、对old_root的刷新操作
-  BPTREE_INTERFACE void Insert(const std::string& key, const std::string& value) {
+  // 插入，如果key已经存在返回false，并不做任何操作，否则执行插入并返回true
+  BPTREE_INTERFACE bool Insert(const std::string& key, const std::string& value, uint64_t seq = no_wal_sequence) {
     if (mode_ != Mode::W && mode_ != Mode::WR) {
       throw BptreeExecption("Permission denied");
     }
     if (key.size() != super_block_.key_size_ || value.size() != super_block_.value_size_) {
       throw BptreeExecption("wrong kv length");
     }
-    GetMetricSet().GetAs<Counter>("tx_total_count")->Add();
-    uint64_t sequence = wal_.Begin();
+
+    uint64_t sequence = seq;
+    if (sequence == no_wal_sequence) {
+      sequence = wal_.Begin();
+      GetMetricSet().GetAs<Counter>("tx_total_count")->Add();
+    }
     InsertInfo info = GetBlock(super_block_.root_index_).Get().Insert(key, value, sequence);
-    if (info.state_ == InsertInfo::State::Split) {
+    bool result = true;
+    if (info.state_ == InsertInfo::State::Invalid) {
+      result = false;
+    } else if (info.state_ == InsertInfo::State::Split) {
       // 根节点的分裂
       uint32_t old_root_index = super_block_.root_index_;
       auto old_root = GetBlock(super_block_.root_index_);
@@ -232,7 +235,7 @@ class BlockManager {
       right_block.Get().SetPrev(new_blocks.first, sequence);
       // insert
       if (info.key_ <= left_block.Get().GetMaxKey()) {
-        left_block.Get().InsertKv(info.key_, info.value_, sequence);
+        auto ret = left_block.Get().InsertKv(info.key_, info.value_, sequence);
       } else {
         right_block.Get().InsertKv(info.key_, info.value_, sequence);
       }
@@ -242,42 +245,58 @@ class BlockManager {
       old_root.Get().AppendKv(left_block.Get().GetMaxKey(), ConstructIndexByNum(new_blocks.first), sequence);
       old_root.Get().AppendKv(right_block.Get().GetMaxKey(), ConstructIndexByNum(new_blocks.second), sequence);
       BPTREE_LOG_DEBUG("the insert operation(key = {}, value = {}) caused the root block to split", key, value);
+    } else {
+      assert(InsertInfo::State::Ok == info.state_);
     }
-    wal_.End(sequence);
-    AfterCommitTx();
+    if (seq == no_wal_sequence) {
+      wal_.End(sequence);
+      AfterCommitTx();
+    }
+    return result;
   }
 
-  // 删除
-  BPTREE_INTERFACE void Delete(const std::string& key) {
+  // 删除, 返回被删除的value，如果没有找到，则返回空字符串
+  BPTREE_INTERFACE std::string Delete(const std::string& key, uint64_t seq = no_wal_sequence) {
     if (mode_ != Mode::W && mode_ != Mode::WR) {
       throw BptreeExecption("Permission denied");
     }
     if (key.size() != super_block_.key_size_) {
       throw BptreeExecption("wrong key length");
     }
-    GetMetricSet().GetAs<Counter>("tx_total_count")->Add();
-    uint64_t sequence = wal_.Begin();
+    uint64_t sequence = seq;
+    if (sequence == no_wal_sequence) {
+      sequence = wal_.Begin();
+      GetMetricSet().GetAs<Counter>("tx_total_count")->Add();
+    }
     // 根节点的merge信息不处理
-    GetBlock(super_block_.root_index_).Get().Delete(key, sequence);
-    wal_.End(sequence);
-    AfterCommitTx();
+    auto ret = GetBlock(super_block_.root_index_).Get().Delete(key, sequence);
+    if (seq == no_wal_sequence) {
+      wal_.End(sequence);
+      AfterCommitTx();
+    }
+    return ret.old_v_;
   }
 
-  // 更新，如果key不在db中，直接返回，否则会将对应的value在内存中的缓存传递给updator，由update执行更新，bptree负责将数据重新刷回硬盘
-  BPTREE_INTERFACE bool Update(const std::string& key,
-                               const std::function<void(char* const ptr, size_t len)>& updator) {
+  // 更新，返回更新前的旧值，如果key不存在返回空字符串
+  BPTREE_INTERFACE std::string Update(const std::string& key, const std::string& value,
+                                      uint64_t seq = no_wal_sequence) {
     if (mode_ != Mode::W && mode_ != Mode::WR) {
       throw BptreeExecption("Permission denied");
     }
     if (key.size() != super_block_.key_size_) {
       throw BptreeExecption("wrong key length");
     }
-    GetMetricSet().GetAs<Counter>("tx_total_count")->Add();
-    uint64_t sequence = wal_.Begin();
-    bool succ = GetBlock(super_block_.root_index_).Get().Update(key, updator, sequence);
-    wal_.End(sequence);
-    AfterCommitTx();
-    return succ;
+    uint64_t sequence = seq;
+    if (sequence == no_wal_sequence) {
+      sequence = wal_.Begin();
+      GetMetricSet().GetAs<Counter>("tx_total_count")->Add();
+    }
+    auto ret = GetBlock(super_block_.root_index_).Get().Update(key, value, sequence);
+    if (seq == no_wal_sequence) {
+      wal_.End(sequence);
+      AfterCommitTx();
+    }
+    return ret.old_v_;
   }
 
   BPTREE_INTERFACE void PrintRootBlock() {
@@ -333,7 +352,7 @@ class BlockManager {
   uint32_t GetRootIndex() const noexcept { return super_block_.root_index_; }
 
   uint32_t GetMaxBlockIndex() const noexcept { return super_block_.current_max_block_index_; }
-  
+
  private:
   // todo 优化，这里的kv顺序是已知的，可以使用AppendKv之类的接口，InsertKv内部还要进行查找和排序。
   std::pair<uint32_t, uint32_t> BlockSplit(const Block* block, uint64_t sequence) {
@@ -346,15 +365,15 @@ class BlockManager {
     std::string block_2_undo = CreateBlockViewWalLog(new_block_2_index, new_block_2.Get().CreateDataView());
     size_t half_count = block->GetKVView().size() / 2;
     for (size_t i = 0; i < half_count; ++i) {
-      bool succ =
-          new_block_1.Get().AppendKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view, no_wal_sequence);
+      bool succ = new_block_1.Get().AppendKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view,
+                                             no_wal_sequence);
       if (succ == false) {
         throw BptreeExecption("block broken, insert nth kv : ", std::to_string(i));
       }
     }
     for (int i = half_count; i < block->GetKVView().size(); ++i) {
-      bool succ =
-          new_block_2.Get().AppendKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view, no_wal_sequence);
+      bool succ = new_block_2.Get().AppendKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view,
+                                             no_wal_sequence);
       if (succ == false) {
         throw BptreeExecption("block broken, insert nth kv : ", std::to_string(i));
       }
@@ -373,13 +392,15 @@ class BlockManager {
     auto new_block = GetBlock(new_block_index);
     std::string block_undo = CreateBlockViewWalLog(new_block_index, new_block.Get().CreateDataView());
     for (size_t i = 0; i < b1->GetKVView().size(); ++i) {
-      bool succ = new_block.Get().AppendKv(b1->GetViewByIndex(i).key_view, b1->GetViewByIndex(i).value_view, no_wal_sequence);
+      bool succ =
+          new_block.Get().AppendKv(b1->GetViewByIndex(i).key_view, b1->GetViewByIndex(i).value_view, no_wal_sequence);
       if (succ == false) {
         throw BptreeExecption("block broken");
       }
     }
     for (size_t i = 0; i < b2->GetKVView().size(); ++i) {
-      bool succ = new_block.Get().AppendKv(b2->GetViewByIndex(i).key_view, b2->GetViewByIndex(i).value_view, no_wal_sequence);
+      bool succ =
+          new_block.Get().AppendKv(b2->GetViewByIndex(i).key_view, b2->GetViewByIndex(i).value_view, no_wal_sequence);
       if (succ == false) {
         throw BptreeExecption("block broken");
       }
@@ -435,7 +456,8 @@ class BlockManager {
         super_block_.SetFreeBlockSize(super_block_.free_block_size_ - 1, sequence);
         // 这个wal日志的意义是，在回滚的时候可能已经成功分配了新的block并刷盘，因此需要 确保这个块被回收
         if (sequence != no_wal_sequence) {
-          std::string redo_log = CreateAllocBlockWalLog(result, height, super_block_.key_size_, super_block_.value_size_);
+          std::string redo_log =
+              CreateAllocBlockWalLog(result, height, super_block_.key_size_, super_block_.value_size_);
           std::string undo_log = block.Get().CreateMetaChangeWalLog("next_free_index", super_block_.free_block_head_);
           wal_.WriteLog(sequence, redo_log, undo_log);
         }

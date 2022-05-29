@@ -113,6 +113,12 @@ struct InsertInfo {
     return obj;
   }
 
+  static InsertInfo Exist() noexcept {
+    InsertInfo obj;
+    obj.state_ = State::Invalid;
+    return obj;
+  }
+
   static InsertInfo Split(const std::string& key, const std::string& value) noexcept {
     InsertInfo obj;
     obj.state_ = State::Split;
@@ -125,16 +131,44 @@ struct InsertInfo {
 struct DeleteInfo {
   enum class State { Ok, Merge, Invalid };
   State state_;
+  std::string old_v_;
 
-  static DeleteInfo Ok() noexcept {
+  static DeleteInfo Ok(const std::string& old_v) noexcept {
     DeleteInfo obj;
+    obj.state_ = State::Ok;
+    obj.old_v_ = old_v;
+    return obj;
+  }
+
+  static DeleteInfo Merge(const std::string& old_v) noexcept {
+    DeleteInfo obj;
+    obj.state_ = State::Merge;
+    obj.old_v_ = old_v;
+    return obj;
+  }
+
+  static DeleteInfo Invalid() noexcept {
+    DeleteInfo obj;
+    obj.state_ = State::Invalid;
+    return obj;
+  }
+};
+
+struct UpdateInfo {
+  enum class State { Ok, Invalid };
+  State state_;
+  std::string old_v_;
+
+  static UpdateInfo Ok(const std::string& old_v) noexcept {
+    UpdateInfo obj;
+    obj.old_v_ = old_v;
     obj.state_ = State::Ok;
     return obj;
   }
 
-  static DeleteInfo Merge() noexcept {
-    DeleteInfo obj;
-    obj.state_ = State::Merge;
+  static UpdateInfo Invalid() noexcept {
+    UpdateInfo obj;
+    obj.state_ = State::Invalid;
     return obj;
   }
 };
@@ -294,8 +328,7 @@ class Block : public BlockBase {
 
   DeleteInfo Delete(const std::string& key, uint64_t sequence);
 
-  bool Update(const std::string& key, const std::function<void(char* const ptr, size_t len)>& updator,
-              uint64_t sequence);
+  UpdateInfo Update(const std::string& key, const std::string& value, uint64_t sequence);
 
   void Print();
 
@@ -427,7 +460,7 @@ class Block : public BlockBase {
 
   std::string_view SetEntryKey(uint32_t offset, const std::string& key, uint64_t sequence) noexcept {
     return SetEntryKey(offset, std::string_view(key), sequence);
-  }  
+  }
 
   // tested
   std::string_view SetEntryKey(uint32_t offset, const std::string_view& key, uint64_t sequence) noexcept;
@@ -470,7 +503,8 @@ class Block : public BlockBase {
     SetFreeList(index, sequence);
   }
 
-  Entry InsertEntry(uint32_t prev_index, const std::string& key, const std::string& value, bool& full, uint64_t sequence) noexcept {
+  Entry InsertEntry(uint32_t prev_index, const std::string& key, const std::string& value, bool& full,
+                    uint64_t sequence) noexcept {
     return InsertEntry(prev_index, std::string_view(key), std::string_view(value), full, sequence);
   }
 
@@ -516,14 +550,20 @@ class Block : public BlockBase {
   }
 
  public:
-  bool InsertKv(const std::string_view& key, const std::string_view& value, uint64_t sequence) noexcept;
+  enum class InsertResult {
+    FULL,
+    EXIST,
+    SUCC,
+  };
 
-  bool InsertKv(const std::string& key, const std::string& value, uint64_t sequence) noexcept {
-    InsertKv(std::string_view(key), std::string_view(value), sequence);
+  InsertResult InsertKv(const std::string_view& key, const std::string_view& value, uint64_t sequence) noexcept;
+
+  InsertResult InsertKv(const std::string& key, const std::string& value, uint64_t sequence) noexcept {
+    return InsertKv(std::string_view(key), std::string_view(value), sequence);
   }
 
-  bool InsertKv(const std::pair<std::string, std::string>& kv, uint64_t sequence) noexcept {
-    InsertKv(kv.first, kv.second, sequence);
+  InsertResult InsertKv(const std::pair<std::string, std::string>& kv, uint64_t sequence) noexcept {
+    return InsertKv(kv.first, kv.second, sequence);
   }
 
   bool AppendKv(const std::string_view& key, const std::string_view& value, uint64_t sequence) noexcept;
@@ -597,7 +637,7 @@ class Block : public BlockBase {
 
   InsertInfo DoSplit(uint32_t child_index, const std::string& key, const std::string& value, uint64_t sequence);
 
-  DeleteInfo DoMerge(uint32_t child_index, uint64_t sequence);
+  DeleteInfo DoMerge(uint32_t child_index, uint64_t sequence, const std::string& old_v);
 
   void HandleMetaUpdateWal(const std::string& meta_name, uint32_t value);
 

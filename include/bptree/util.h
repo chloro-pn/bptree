@@ -5,9 +5,12 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <numeric>
 #include <string>
 
 #include "bptree/exception.h"
+
+#define BPTREE_INTERFACE
 
 namespace bptree {
 namespace util {
@@ -118,4 +121,7 @@ inline std::string StringParser(const std::string& str, size_t& offset) {
 }
 
 }  // namespace util
+
+constexpr uint64_t no_wal_sequence = std::numeric_limits<uint64_t>::max();
+
 }  // namespace bptree

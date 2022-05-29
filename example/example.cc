@@ -41,7 +41,6 @@ int main() {
   option.mode = bptree::Mode::WR;
   option.key_size = 10;
   option.value_size = 20;
-  option.no_reset_wal = true;
   bptree::BlockManager manager(option);
   auto kvs = ConstructRandomKv(100000, 10, 20);
   for (auto& each : kvs) {
@@ -99,8 +98,6 @@ int main() {
   }
 
   BPTREE_LOG_INFO("all check succ");
-  manager.PrintSuperBlockInfo();
-  manager.PrintRootBlock();
   manager.PrintMetricSet();
   return 0;
 }

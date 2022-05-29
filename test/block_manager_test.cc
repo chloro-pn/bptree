@@ -16,23 +16,22 @@ TEST(block_manager, base) {
   std::string value = manager.Get("a");
   EXPECT_EQ(value, std::string(""));
 
-  manager.Insert("a", "value");
-  manager.Insert("b", "bbbbb");
+  bool succ = manager.Insert("a", "value");
+  EXPECT_EQ(succ, true);
+  succ = manager.Insert("b", "bbbbb");
+  EXPECT_EQ(succ, true);
+  succ = manager.Insert("a", "vvvvv");
+  EXPECT_EQ(succ, false);
   value = manager.Get("c");
   EXPECT_EQ(std::string(""), value);
   EXPECT_EQ("value", manager.Get("a"));
   EXPECT_EQ("bbbbb", manager.Get("b"));
 
-  bool do_update = false;
-  bool succ = manager.Update("c", [&do_update](char* const ptr, size_t len) { do_update = true; });
-  EXPECT_EQ(do_update, false);
-  EXPECT_EQ(succ, false);
+  std::string old_v = manager.Update("c", "valuc");
+  EXPECT_EQ(old_v, "");
 
-  bool succ2 = manager.Update("a", [&do_update](char* const ptr, size_t len) {
-    ptr[1] = 'a';
-    ptr[len - 1] = 'a';
-  });
-  EXPECT_TRUE(succ2);
+  std::string old_v2 = manager.Update("a", "valua");
+  EXPECT_EQ(old_v2, "value");
   EXPECT_EQ("valua", manager.Get("a"));
 }
 

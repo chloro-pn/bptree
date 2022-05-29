@@ -1,5 +1,5 @@
-#include <iostream>
 #include <cstdint>
+#include <iostream>
 
 #include "bptree/block_manager.h"
 
@@ -12,29 +12,17 @@
 #define white "\033[1;37m"
 #define yellow "\033[1;33m"
 
-void PrintYellow(uint32_t index, double rate) {
-  printf(" %5d - %f" yellow " ■ " none, index, rate);
-}
+void PrintYellow(uint32_t index, double rate) { printf(" %5d - %f" yellow " ■ " none, index, rate); }
 
-void PrintNone(uint32_t index, double rate) {
-  printf(" %5d - %f" none " ■ " none, index, rate);
-}
+void PrintNone(uint32_t index, double rate) { printf(" %5d - %f" none " ■ " none, index, rate); }
 
-void PrintWhite(uint32_t index, double rate) {
-  printf(" %5d - %f" white " ■ " none, index, rate);
-}
+void PrintWhite(uint32_t index, double rate) { printf(" %5d - %f" white " ■ " none, index, rate); }
 
-void PrintRed(uint32_t index, double rate) {
-  printf(" %5d - %f" red " ■ " none, index, rate);
-}
+void PrintRed(uint32_t index, double rate) { printf(" %5d - %f" red " ■ " none, index, rate); }
 
-void PrintGreen(uint32_t index, double rate) {
-  printf(" %5d - %f" green " ■ " none, index, rate);
-}
+void PrintGreen(uint32_t index, double rate) { printf(" %5d - %f" green " ■ " none, index, rate); }
 
-void PrintBlue(uint32_t index, double rate) {
-  printf(" %5d - %f" blue " ■ " none, index, rate);
-}
+void PrintBlue(uint32_t index, double rate) { printf(" %5d - %f" blue " ■ " none, index, rate); }
 
 void PrintBlock(uint32_t index, const bptree::Block* block) {
   double max = block->GetMaxEntrySize();
@@ -71,14 +59,14 @@ int main(int argc, char* argv[]) {
     bptree::BlockManager manager(option);
     uint32_t max = manager.GetMaxBlockIndex();
     size_t max_row = max / 10 + 1;
-    for(size_t j = 0; j < max_row; ++j) {
-      for(size_t i = 0; i < 10; ++i) {
+    for (size_t j = 0; j < max_row; ++j) {
+      for (size_t i = 0; i < 10; ++i) {
         size_t index = j * 10 + i;
         if (index > max) {
           break;
         }
         if (index == 0) {
-          // super block 
+          // super block
           continue;
         }
         auto block = manager.GetBlock(index);
