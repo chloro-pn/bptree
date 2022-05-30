@@ -5,6 +5,7 @@
 #include <functional>
 
 #include "bptree/util.h"
+#include "bptree/exception.h"
 
 namespace bptree {
 
@@ -36,26 +37,26 @@ class Transaction {
 
   BPTREE_INTERFACE std::string Update(const std::string& key, const std::string& value);
 
-  BPTREE_INTERFACE void Commit() {
-    if (seq_ == no_wal_sequence) {
-      return;
-    }
-    manager_.GetWal().End(seq_);
-    seq_ = no_wal_sequence;
-  }
+  BPTREE_INTERFACE void Commit();
 
-  BPTREE_INTERFACE void RollBack() {
-    if (seq_ == no_wal_sequence) {
-      return;
+  BPTREE_INTERFACE void RollBack();
+
+  ~Transaction() {
+    if (seq_ != no_wal_sequence) {
+      RollBack();    
     }
-    // todo : 需要将operations_中的操作按照逆序撤回，最后向wal日志提交abort or end
-    seq_ = no_wal_sequence;
   }
   
  private:
   BlockManager& manager_;
   std::vector<Operation> operations_;
   uint64_t seq_;
+
+  void seq_check() {
+    if (seq_ == no_wal_sequence) {
+      throw BptreeExecption("invalid transaction seq");
+    }
+  }
 };
 
 }
