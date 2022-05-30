@@ -1,4 +1,7 @@
 #include "bptree/block_manager.h"
+
+#include <thread>
+
 #include "bptree/transaction.h"
 #include "gtest/gtest.h"
 
@@ -106,4 +109,18 @@ TEST(block_manager, transaction) {
   tx2.RollBack();
   EXPECT_EQ(manager.Get("a"), "value");
   EXPECT_EQ(manager.Get("b"), "");
+
+  std::thread th([&]() { manager.Run(); });
+  bptree::TransactionMt tx3(manager);
+  ret = tx3.Get("a");
+  EXPECT_EQ(ret, "value");
+  bool succ = tx3.Insert("b", "value");
+  EXPECT_EQ(succ, true);
+  EXPECT_EQ(tx3.Get("b"), "value");
+  tx3.Update("b", "bbbbb");
+  tx3.RollBack();
+  EXPECT_EQ(manager.Get("a"), "value");
+  EXPECT_EQ(manager.Get("b"), "");
+  manager.Stop();
+  th.join();
 }

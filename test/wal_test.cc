@@ -25,13 +25,15 @@ TEST(wal, all) {
     bptree::WriteAheadLog wal("bptree_wal.log", recover_func);
     wal.OpenFile();
     wal.Recover();
-    uint64_t tx_seq = wal.Begin();
+    uint64_t tx_seq = wal.RequestSeq();
+    wal.Begin(tx_seq);
     wal.WriteLog(tx_seq, "a=3", "a=0");
     wal.WriteLog(tx_seq, "b=4", "b=0");
     a = 3;
     b = 4;
     wal.End(tx_seq);
-    tx_seq = wal.Begin();
+    tx_seq = wal.RequestSeq();
+    wal.Begin(tx_seq);
     wal.WriteLog(tx_seq, "c=2", "c=0");
     c = 2;
     wal.WriteLog(tx_seq, "c=5", "c=2");

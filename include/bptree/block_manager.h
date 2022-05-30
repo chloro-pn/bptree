@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -19,12 +20,15 @@
 #include "bptree/log.h"
 #include "bptree/metric/metric.h"
 #include "bptree/metric/metric_set.h"
+#include "bptree/queue.h"
+#include "bptree/transaction.h"
 #include "bptree/util.h"
 #include "bptree/wal.h"
 
 namespace bptree {
 
 constexpr uint32_t bit_map_size = 1024;
+constexpr size_t operation_queue_size = 4096;
 
 enum class GetRangeOption {
   SKIP,
@@ -89,7 +93,9 @@ class BlockManager {
         wal_(db_name_ + "/" + db_name_ + "_wal.log",
              [this](uint64_t seq, MsgType type, const std::string log) -> void { this->HandleWal(seq, type, log); }),
         dw_(db_name_ + "/" + db_name_ + "_double_write.log"),
-        no_reset_wal_(option.no_reset_wal) {
+        no_reset_wal_(option.no_reset_wal),
+        queue_(operation_queue_size),
+        stop_(false) {
     block_cache_.SetFreeNotify([this](const uint32_t& key, Block& value) -> void {
       bool dirty = value.Flush();
       if (dirty == true) {
@@ -124,7 +130,8 @@ class BlockManager {
 
       FlushSuperBlockToFile(f_);
 
-      uint64_t seq = wal_.Begin();
+      uint64_t seq = wal_.RequestSeq();
+      wal_.Begin(seq);
       std::string redo_log =
           CreateAllocBlockWalLog(super_block_.root_index_, 1, super_block_.key_size_, super_block_.value_size_);
       std::string undo_log = "";
@@ -214,7 +221,8 @@ class BlockManager {
 
     uint64_t sequence = seq;
     if (sequence == no_wal_sequence) {
-      sequence = wal_.Begin();
+      sequence = wal_.RequestSeq();
+      wal_.Begin(sequence);
       GetMetricSet().GetAs<Counter>("tx_total_count")->Add();
     }
     InsertInfo info = GetBlock(super_block_.root_index_).Get().Insert(key, value, sequence);
@@ -265,7 +273,8 @@ class BlockManager {
     }
     uint64_t sequence = seq;
     if (sequence == no_wal_sequence) {
-      sequence = wal_.Begin();
+      sequence = wal_.RequestSeq();
+      wal_.Begin(sequence);
       GetMetricSet().GetAs<Counter>("tx_total_count")->Add();
     }
     // 根节点的merge信息不处理
@@ -288,7 +297,8 @@ class BlockManager {
     }
     uint64_t sequence = seq;
     if (sequence == no_wal_sequence) {
-      sequence = wal_.Begin();
+      sequence = wal_.RequestSeq();
+      wal_.Begin(sequence);
       GetMetricSet().GetAs<Counter>("tx_total_count")->Add();
     }
     auto ret = GetBlock(super_block_.root_index_).Get().Update(key, value, sequence);
@@ -352,6 +362,64 @@ class BlockManager {
   uint32_t GetRootIndex() const noexcept { return super_block_.root_index_; }
 
   uint32_t GetMaxBlockIndex() const noexcept { return super_block_.current_max_block_index_; }
+
+  Queue<Operation>& GetQueue() { return queue_; }
+
+  void Stop() { stop_.store(true); }
+
+  void Run() {
+    // 记录了每个事务的历史记录，用于回滚
+    std::unordered_map<uint64_t, std::vector<std::unique_ptr<Operation>>> txs_;
+    while (stop_.load() == false) {
+      std::vector<std::unique_ptr<Operation>> ops = queue_.TryPop();
+      for (auto& each : ops) {
+        std::unique_ptr<Operation> result(new Operation());
+        result->sequence = each->sequence;
+        result->type = each->type;
+        auto notify_queue = each->notify_queue_;
+        uint64_t seq = each->sequence;
+        if (each->type == OperationType::Begin) {
+          wal_.Begin(seq);
+          assert(txs_.count(seq) == 0);
+          txs_[seq].push_back(result->CopyWithoutQueue());
+        } else if (each->type == OperationType::End) {
+          wal_.End(seq);
+          txs_.erase(seq);
+        } else if (each->type == OperationType::Get) {
+          auto value = Get(each->key);
+          result->key = each->key;
+          result->value = value;
+          assert(txs_.count(seq) == 1);
+          txs_[seq].push_back(result->CopyWithoutQueue());
+        } else if (each->type == OperationType::Insert) {
+          bool succ = Insert(each->key, each->value, seq);
+          result->key = each->key;
+          result->value = succ ? each->value : "";
+          assert(txs_.count(seq) == 1);
+          txs_[seq].push_back(result->CopyWithoutQueue());
+        } else if (each->type == OperationType::Delete) {
+          auto old_v = Delete(each->key, seq);
+          result->key = each->key;
+          result->value = old_v;
+          assert(txs_.count(seq) == 1);
+          txs_[seq].push_back(result->CopyWithoutQueue());
+        } else if (each->type == OperationType::Update) {
+          auto old_v = Update(each->key, each->value, seq);
+          BPTREE_LOG_INFO("update {} {} {}", each->key, each->value, old_v);
+          result->key = each->key;
+          result->value = old_v;
+          assert(txs_.count(seq) == 1);
+          txs_[seq].push_back(result->CopyWithoutQueue());
+        } else if (each->type == OperationType::RollBack) {
+          // todo rollback
+          RollBack(txs_[seq], *this);
+          txs_.erase(seq);
+        }
+        notify_queue->Push(std::move(result));
+      }
+      sleep(std::chrono::milliseconds(20));
+    }
+  }
 
  private:
   // todo 优化，这里的kv顺序是已知的，可以使用AppendKv之类的接口，InsertKv内部还要进行查找和排序。
@@ -802,5 +870,7 @@ class BlockManager {
   MetricSet metric_set_;
   // 关闭清空wal日志操作
   bool no_reset_wal_;
+  Queue<Operation> queue_;
+  std::atomic<bool> stop_;
 };
 }  // namespace bptree

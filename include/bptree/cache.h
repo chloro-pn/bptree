@@ -56,6 +56,7 @@ class LRUCache {
       value_ = other.value_;
       unbinded_ = other.unbinded_;
       other.value_ = nullptr;
+      return *this;
     }
 
     bool Exist() const { return value_ != nullptr; }

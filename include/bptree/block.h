@@ -267,7 +267,7 @@ struct Entry {
 class Block : public BlockBase {
  public:
   // 新建的block构造函数
-  Block(BlockManager& manager, uint32_t index, uint32_t height, uint32_t key_size, uint32_t value_size) noexcept
+  Block(BlockManager& manager, uint32_t index, uint32_t height, uint32_t key_size, uint32_t value_size)
       : BlockBase(manager, index, height),
         next_free_index_(not_free_flag),
         prev_(0),
@@ -569,11 +569,11 @@ class Block : public BlockBase {
   bool AppendKv(const std::string_view& key, const std::string_view& value, uint64_t sequence) noexcept;
 
   bool AppendKv(const std::string& key, const std::string& value, uint64_t sequence) noexcept {
-    AppendKv(std::string_view(key), std::string_view(value), sequence);
+    return AppendKv(std::string_view(key), std::string_view(value), sequence);
   }
 
   bool AppendKv(const std::pair<std::string, std::string>& kv, uint64_t sequence) noexcept {
-    AppendKv(kv.first, kv.second, sequence);
+    return AppendKv(kv.first, kv.second, sequence);
   }
 
   void DeleteKvByIndex(uint32_t index, uint64_t sequence) {
@@ -627,9 +627,9 @@ class Block : public BlockBase {
     return b1->kv_view_.size() + b2->kv_view_.size() <= b1->GetMaxEntrySize();
   }
 
-  void UpdateBlockPrevIndex(uint32_t block_index, uint32_t prev, uint64_t sequence) noexcept;
+  void UpdateBlockPrevIndex(uint32_t block_index, uint32_t prev, uint64_t sequence);
 
-  void UpdateBlockNextIndex(uint32_t block_index, uint32_t next, uint64_t sequence) noexcept;
+  void UpdateBlockNextIndex(uint32_t block_index, uint32_t next, uint64_t sequence);
 
   void MoveFirstElementTo(Block* other, uint64_t sequence);
 
