@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -19,12 +20,14 @@
 #include "bptree/log.h"
 #include "bptree/metric/metric.h"
 #include "bptree/metric/metric_set.h"
+#include "bptree/queue.h"
 #include "bptree/util.h"
 #include "bptree/wal.h"
 
 namespace bptree {
 
 constexpr uint32_t bit_map_size = 1024;
+constexpr size_t operation_queue_size = 4096;
 
 enum class GetRangeOption {
   SKIP,
@@ -89,7 +92,9 @@ class BlockManager {
         wal_(db_name_ + "/" + db_name_ + "_wal.log",
              [this](uint64_t seq, MsgType type, const std::string log) -> void { this->HandleWal(seq, type, log); }),
         dw_(db_name_ + "/" + db_name_ + "_double_write.log"),
-        no_reset_wal_(option.no_reset_wal) {
+        no_reset_wal_(option.no_reset_wal),
+        queue_(operation_queue_size),
+        stop_(false) {
     block_cache_.SetFreeNotify([this](const uint32_t& key, Block& value) -> void {
       bool dirty = value.Flush();
       if (dirty == true) {
@@ -788,6 +793,38 @@ class BlockManager {
     metric_set_.CreateMetric<Counter>("cache_miss_count");
   }
 
+  void Stop() { stop_.store(true); }
+
+  void Run() {
+    while (stop_.load() == false) {
+      std::vector<std::unique_ptr<Operation>> ops = queue_.TryPop();
+      for (auto& each : ops) {
+        std::unique_ptr<Operation> result(new Operation());
+        result->sequence = each->sequence;
+        result->type = each->type;
+        if (each->type == OperationType::Get) {
+          auto value = Get(each->key);
+          result->key = each->key;
+          result->value = value;
+        } else if (each->type == OperationType::Insert) {
+          bool succ = Insert(each->key, each->value, each->sequence);
+          result->key = each->key;
+          result->value = succ ? each->value : "";
+        } else if (each->type == OperationType::Delete) {
+          auto old_v = Delete(each->key, each->sequence);
+          result->key = each->key;
+          result->value = old_v;
+        } else if (each->type == OperationType::Update) {
+          auto old_v = Update(each->key, each->value, each->sequence);
+          result->key = each->key;
+          result->value = old_v;
+        }
+        each->notify_queue_->Push(std::move(result));
+      }
+      sleep(std::chrono::milliseconds(20));
+    }
+  }
+
  private:
   Mode mode_;
   std::unique_ptr<Comparator> comparator_;
@@ -802,5 +839,7 @@ class BlockManager {
   MetricSet metric_set_;
   // 关闭清空wal日志操作
   bool no_reset_wal_;
+  Queue<Operation> queue_;
+  std::atomic<bool> stop_;
 };
 }  // namespace bptree

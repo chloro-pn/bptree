@@ -1,29 +1,19 @@
 #pragma once
 
-#include <vector>
-#include <string>
 #include <functional>
+#include <string>
+#include <vector>
 
-#include "bptree/util.h"
 #include "bptree/exception.h"
+#include "bptree/util.h"
 
 namespace bptree {
 
-enum class OperationType {
-  Get,
-  GetRange,
-  Insert,
-  Update,
-  Delete,
-};
-
-struct Operation {
-  OperationType type;
-  std::string key;
-  std::string value;
-};
-
 class BlockManager;
+
+/*
+ * 这个类提供非线程安全的事务机制，不通过queue与blockmanager通信
+ */
 
 class Transaction {
  public:
@@ -43,10 +33,10 @@ class Transaction {
 
   ~Transaction() {
     if (seq_ != no_wal_sequence) {
-      RollBack();    
+      RollBack();
     }
   }
-  
+
  private:
   BlockManager& manager_;
   std::vector<Operation> operations_;
@@ -59,4 +49,4 @@ class Transaction {
   }
 };
 
-}
+}  // namespace bptree

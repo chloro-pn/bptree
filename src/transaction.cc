@@ -66,7 +66,7 @@ BPTREE_INTERFACE void Transaction::RollBack() {
     return;
   }
   // todo : 需要将operations_中的操作按照逆序撤回，最后向wal日志提交abort or end
-  for(auto it = operations_.rbegin(); it != operations_.rend(); ++it) {
+  for (auto it = operations_.rbegin(); it != operations_.rend(); ++it) {
     if (it->type == OperationType::Get) {
       // do nothing
     } else if (it->type == OperationType::Insert) {

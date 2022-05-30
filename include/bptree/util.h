@@ -2,13 +2,17 @@
 
 #include <cassert>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <numeric>
 #include <string>
+#include <thread>
 
 #include "bptree/exception.h"
+#include "bptree/queue.h"
 
 #define BPTREE_INTERFACE
 
@@ -123,5 +127,23 @@ inline std::string StringParser(const std::string& str, size_t& offset) {
 }  // namespace util
 
 constexpr uint64_t no_wal_sequence = std::numeric_limits<uint64_t>::max();
+
+enum class OperationType {
+  Get,
+  GetRange,
+  Insert,
+  Update,
+  Delete,
+};
+
+struct Operation {
+  OperationType type;
+  std::string key;
+  std::string value;
+  std::shared_ptr<Queue<Operation>> notify_queue_;
+  uint64_t sequence;
+};
+
+inline void sleep(std::chrono::milliseconds ms) { std::this_thread::sleep_for(ms); }
 
 }  // namespace bptree

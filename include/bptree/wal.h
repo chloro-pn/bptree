@@ -75,6 +75,7 @@ class WriteAheadLog {
 
   // 申请一个新的事务编号，并将事务开始标志写入wal文件，之后在事务结束标志被写入前，所有使用该编号写入的
   // 数据日志都被认为是在一个事务内，wal保证这些数据日志要么都被提交，要么都会通过调用log_handler_进行回滚
+  // todo : 这里需要是线程安全的
   uint64_t Begin() {
     uint64_t result = next_wal_sequence_;
     next_wal_sequence_ += 1;

@@ -9,6 +9,7 @@ cc_library(
   deps = [
     "@crc32//:crc32c",
     "@spdlog//:spdlog",
+    "@mpmcqueue//:mpmc_queue",
   ]
 )
 

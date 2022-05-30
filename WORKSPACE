@@ -19,3 +19,10 @@ new_git_repository(
     branch = "v1.x",
     build_file = "//third_party:spdlog.build",
 )
+
+new_git_repository(
+    name = "mpmcqueue",
+    remote = "https://ghproxy.com/https://github.com/rigtorp/MPMCQueue",
+    branch = "master",
+    build_file = "//third_party:mpmc_queue.build",
+)
