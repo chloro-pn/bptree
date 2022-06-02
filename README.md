@@ -70,5 +70,5 @@ bazel test ...
 ```
 
 ## design ##
-<img src="https://github.com/chloro-pn/bptree/blob/master/png/arch.PNG" width = 600 height = 300 alt="" align = center />
+<img src="https://github.com/chloro-pn/bptree/blob/master/png/arch.PNG" width = 600 height = 350 alt="" align = center />
 
