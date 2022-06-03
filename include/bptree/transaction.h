@@ -12,7 +12,7 @@ namespace bptree {
 
 class BlockManager;
 
-void RollBack(const std::vector<std::unique_ptr<Operation>>& ops, BlockManager& manager);
+void RollBack(const std::vector<std::unique_ptr<Operation>>& ops, BlockManager& manager, uint64_t seq);
 
 /*
  * 这个类提供非线程安全的事务机制，不通过queue与blockmanager通信

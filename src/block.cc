@@ -108,8 +108,8 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value, uint6
       auto ret = InsertKv(key, ConstructIndexByNum(child_block_index), sequence);
       // 只插入一个元素，不应该失败
       assert(ret == InsertResult::SUCC);
-      BPTREE_LOG_DEBUG("insert ({}, {}) to a new block {}", key, value,
-                       manager_.GetBlock(child_block_index).Get().GetIndex());
+      BPTREE_LOG_DEBUG("insert ({}, {}) to a new block {}, seq = {}", key, value,
+                       manager_.GetBlock(child_block_index).Get().GetIndex(), sequence);
       return InsertInfo::Ok();
     }
     int32_t child_index = -1;
@@ -120,7 +120,8 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value, uint6
       }
     }
     if (child_index == -1) {
-      BPTREE_LOG_DEBUG("block {} update max key from {} to {}", GetIndex(), kv_view_.back().key_view, key);
+      BPTREE_LOG_DEBUG("block {} update max key from {} to {}, seq = {}", GetIndex(), kv_view_.back().key_view, key,
+                       sequence);
       child_index = kv_view_.size() - 1;
       UpdateEntryKey(kv_view_.back().index, key, sequence);
     }
@@ -128,23 +129,24 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value, uint6
     InsertInfo info = manager_.GetBlock(child_block_index).Get().Insert(key, value, sequence);
     // 如果插入结果是成功或者发现key已存在，返回结果
     if (info.state_ == InsertInfo::State::Ok) {
-      BPTREE_LOG_DEBUG("insert ({}, {}) to inner block {}, no split", key, value, GetIndex());
+      BPTREE_LOG_DEBUG("insert ({}, {}) to inner block {}, no split, seq = {}", key, value, GetIndex(), sequence);
       return info;
     } else if (info.state_ == InsertInfo::State::Invalid) {
-      BPTREE_LOG_DEBUG("insert ({}, {}) to inner block {}, key exist", key, value, GetIndex());
+      BPTREE_LOG_DEBUG("insert ({}, {}) to inner block {}, key exist, seq = {}", key, value, GetIndex(), sequence);
       return info;
     }
     return DoSplit(child_index, info.key_, info.value_, sequence);
   } else {
     auto ret = InsertKv(key, value, sequence);
     if (ret == InsertResult::FULL) {
-      BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {} results in a split", key, value, GetIndex());
+      BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {} results in a split, seq = {}", key, value, GetIndex(),
+                       sequence);
       return InsertInfo::Split(key, value);
     } else if (ret == InsertResult::EXIST) {
-      BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {} fail, key exist", key, value, GetIndex());
+      BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {} fail, key exist, seq = {}", key, value, GetIndex(), sequence);
       return InsertInfo::Exist();
     }
-    BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {} succ, no split", key, value, GetIndex());
+    BPTREE_LOG_DEBUG("insert ({}, {}) to leaf block {} succ, no split, seq = {}", key, value, GetIndex(), sequence);
     return InsertInfo::Ok();
   }
   InsertInfo obj;
@@ -163,14 +165,17 @@ DeleteInfo Block::Delete(const std::string& key, uint64_t sequence) {
             block.Get().GetKVView().size() != 0) {
           // 更新maxkey的记录，如果子节点block的kv为空不需要处理，因为后面会在DoMerge中删除这个节点
           assert(info.state_ != DeleteInfo::State::Invalid);
-          BPTREE_LOG_DEBUG("update inner block {}'s key because of delete, key == {}", GetIndex(), key);
+          BPTREE_LOG_DEBUG("update inner block {}'s key because of delete, key == {}, seq = {}", GetIndex(), key,
+                           sequence);
           UpdateEntryKey(kv_view_[i].index, block.Get().GetMaxKey(), sequence);
         }
         if (info.state_ == DeleteInfo::State::Ok) {
-          BPTREE_LOG_DEBUG("delete key {} from inner block {}, no merge", key, block.Get().GetIndex());
+          BPTREE_LOG_DEBUG("delete key {} from inner block {}, no merge, seq = {}", key, block.Get().GetIndex(),
+                           sequence);
           return info;
         } else if (info.state_ == DeleteInfo::State::Invalid) {
-          BPTREE_LOG_DEBUG("delete key {} from inner block {} fail, key not exist", key, block.Get().GetIndex());
+          BPTREE_LOG_DEBUG("delete key {} from inner block {} fail, key not exist, seq = {}", key,
+                           block.Get().GetIndex(), sequence);
           return info;
         } else {
           block.UnBind();
@@ -180,7 +185,7 @@ DeleteInfo Block::Delete(const std::string& key, uint64_t sequence) {
       }
     }
     // 不存在这个key
-    BPTREE_LOG_DEBUG("delete the key {} that is not exist", key);
+    BPTREE_LOG_DEBUG("delete the key {} that is not exist, seq = {}", key, sequence);
     return DeleteInfo::Invalid();
   } else {
     std::string old_v;
@@ -193,10 +198,10 @@ DeleteInfo Block::Delete(const std::string& key, uint64_t sequence) {
       }
     }
     if (CheckIfNeedToMerge() == true) {
-      BPTREE_LOG_DEBUG("delete key {} from leaf block {} results in merge", key, GetIndex());
+      BPTREE_LOG_DEBUG("delete key {} from leaf block {} results in merge, seq = {}", key, GetIndex(), sequence);
       return DeleteInfo::Merge(old_v);
     } else {
-      BPTREE_LOG_DEBUG("delete key {} from leaf block {} succ, no merge", key, GetIndex())
+      BPTREE_LOG_DEBUG("delete key {} from leaf block {} succ, no merge, seq = {}", key, GetIndex(), sequence);
       return DeleteInfo::Ok(old_v);
     }
   }
@@ -211,6 +216,7 @@ UpdateInfo Block::Update(const std::string& key, const std::string& value, uint6
         return manager_.GetBlock(GetChildIndex(i)).Get().Update(key, value, sequence);
       }
     }
+    BPTREE_LOG_DEBUG("update key {} in block {} fail, not exist, seq = {}", key, GetIndex(), sequence);
     return UpdateInfo::Invalid();
   } else {
     auto it = std::find_if(kv_view_.begin(), kv_view_.end(), [&](const Entry& n) -> bool {
@@ -219,10 +225,11 @@ UpdateInfo Block::Update(const std::string& key, const std::string& value, uint6
     if (it != kv_view_.end()) {
       std::string old_v(it->value_view);
       it->value_view = UpdateEntryValue(it->index, value, sequence);
-      BPTREE_LOG_DEBUG("update key {} in block {} succ", key, GetIndex());
+      BPTREE_LOG_DEBUG("update key {} in block {} succ, seq = {}", key, GetIndex(), sequence);
       return UpdateInfo::Ok(old_v);
     }
   }
+  BPTREE_LOG_DEBUG("update key {} in block {} fail, not exist, seq = {}", key, GetIndex(), sequence);
   return UpdateInfo::Invalid();
 }
 

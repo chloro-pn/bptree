@@ -7,13 +7,12 @@
 
 namespace bptree {
 
-void RollBack(const std::vector<std::unique_ptr<Operation>>& operations_, BlockManager& manager_) {
-  uint64_t seq_ = no_wal_sequence;
+void RollBack(const std::vector<std::unique_ptr<Operation>>& operations_, BlockManager& manager_, uint64_t seq_) {
   assert(operations_.empty() == false);
   for (auto it = operations_.rbegin(); it != operations_.rend(); ++it) {
     const Operation& op = *(*it).get();
     if (op.type == OperationType::Begin) {
-      seq_ = op.sequence;
+      assert(seq_ == op.sequence);
     } else if (op.type == OperationType::Get) {
       // do nothing
     } else if (op.type == OperationType::Insert) {
@@ -115,7 +114,7 @@ BPTREE_INTERFACE void Transaction::RollBack() {
   if (seq_ == no_wal_sequence) {
     return;
   }
-  ::bptree::RollBack(operations_, manager_);
+  ::bptree::RollBack(operations_, manager_, seq_);
   seq_ = no_wal_sequence;
 }
 

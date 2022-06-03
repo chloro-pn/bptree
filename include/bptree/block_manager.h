@@ -405,14 +405,13 @@ class BlockManager {
           txs_[seq].push_back(result->CopyWithoutQueue());
         } else if (each->type == OperationType::Update) {
           auto old_v = Update(each->key, each->value, seq);
-          BPTREE_LOG_INFO("update {} {} {}", each->key, each->value, old_v);
           result->key = each->key;
           result->value = old_v;
           assert(txs_.count(seq) == 1);
           txs_[seq].push_back(result->CopyWithoutQueue());
         } else if (each->type == OperationType::RollBack) {
           // todo rollback
-          RollBack(txs_[seq], *this);
+          RollBack(txs_[seq], *this, seq);
           txs_.erase(seq);
         }
         notify_queue->Push(std::move(result));
