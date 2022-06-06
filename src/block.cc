@@ -19,13 +19,13 @@ bool BlockBase::Flush() noexcept {
     return false;
   }
   uint32_t offset = 0;
-  offset = AppendToBuf(buf_, crc_, offset);
-  offset = AppendToBuf(buf_, index_, offset);
-  offset = AppendToBuf(buf_, height_, offset);
+  offset = util::AppendToBuf(buf_, crc_, offset);
+  offset = util::AppendToBuf(buf_, index_, offset);
+  offset = util::AppendToBuf(buf_, height_, offset);
   FlushToBuf(offset);
   // calculate crc and update.
   crc_ = crc32((const char*)&buf_[sizeof(crc_)], block_size - sizeof(crc_));
-  AppendToBuf(buf_, crc_, 0);
+  util::AppendToBuf(buf_, crc_, 0);
   dirty_ = false;
   manager_.GetMetricSet().GetAs<Gauge>("dirty_block_count")->Sub();
   BPTREE_LOG_DEBUG("block {} flush succ", index_);
@@ -105,7 +105,7 @@ InsertInfo Block::Insert(const std::string& key, const std::string& value, uint6
     if (kv_view_.empty() == true) {
       uint32_t child_block_index = manager_.AllocNewBlock(GetHeight() - 1, sequence);
       manager_.GetBlock(child_block_index).Get().Insert(key, value, sequence);
-      auto ret = InsertKv(key, ConstructIndexByNum(child_block_index), sequence);
+      auto ret = InsertKv(key, util::ConstructIndexByNum(child_block_index), sequence);
       // 只插入一个元素，不应该失败
       assert(ret == InsertResult::SUCC);
       BPTREE_LOG_DEBUG("insert ({}, {}) to a new block {}, seq = {}", key, value,
@@ -463,11 +463,11 @@ InsertInfo Block::DoSplit(uint32_t child_index, const std::string& key, const st
   std::string block_1_max_key = new_block_1.Get().GetMaxKey();
   std::string block_2_max_key = new_block_2.Get().GetMaxKey();
   // 更新本节点的索引
-  UpdateByIndex(child_index, block_1_max_key, ConstructIndexByNum(new_block_1_index), sequence);
-  auto ret = InsertKv(block_2_max_key, ConstructIndexByNum(new_block_2_index), sequence);
+  UpdateByIndex(child_index, block_1_max_key, util::ConstructIndexByNum(new_block_1_index), sequence);
+  auto ret = InsertKv(block_2_max_key, util::ConstructIndexByNum(new_block_2_index), sequence);
   BPTREE_LOG_DEBUG("block split from {} to {} and {}", block_index, new_block_1_index, new_block_2_index);
   if (ret == InsertResult::FULL) {
-    return InsertInfo::Split(block_2_max_key, ConstructIndexByNum(new_block_2_index));
+    return InsertInfo::Split(block_2_max_key, util::ConstructIndexByNum(new_block_2_index));
   }
   // 对于非叶子节点的索引更新操作，不应该出现重复key现象
   assert(ret == InsertResult::SUCC);
@@ -518,7 +518,7 @@ DeleteInfo Block::DoMerge(uint32_t child_index, uint64_t sequence, const std::st
       UpdateBlockPrevIndex(next_index, new_block_index, sequence);
     }
     // todo 优化，这里也可以使用string_view
-    UpdateByIndex(left_child_index, new_block.Get().GetMaxKey(), ConstructIndexByNum(new_block_index), sequence);
+    UpdateByIndex(left_child_index, new_block.Get().GetMaxKey(), util::ConstructIndexByNum(new_block_index), sequence);
     DeleteKvByIndex(right_child_index, sequence);
     left_child.UnBind();
     right_child.UnBind();

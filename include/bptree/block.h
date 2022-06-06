@@ -27,78 +27,6 @@ constexpr uint32_t super_height = std::numeric_limits<uint32_t>::max();
 
 constexpr uint32_t not_free_flag = std::numeric_limits<uint32_t>::max();
 
-// helper function
-
-// tested
-inline uint32_t StringToUInt32t(const std::string& value) noexcept {
-  return static_cast<uint32_t>(atol(value.c_str()));
-}
-
-// tested
-inline uint32_t StringToUInt32t(const std::string_view& value) noexcept {
-  return static_cast<uint32_t>(atol(value.data()));
-}
-
-// tested
-inline std::string ConstructIndexByNum(uint32_t n) noexcept {
-  std::string result((const char*)&n, sizeof(uint32_t));
-  return result;
-}
-
-template <typename T>
-concept NotString = !std::is_same_v<std::decay_t<T>, std::string>;
-
-// tested
-template <size_t n, typename T>
-requires NotString<T> inline size_t AppendToBuf(char (&buf)[n], const T& t, size_t start_point) noexcept {
-  memcpy((void*)&buf[start_point], &t, sizeof(T));
-  start_point += sizeof(T);
-  assert(start_point <= n);
-  return start_point;
-}
-
-// tested
-template <size_t n>
-inline size_t AppendStrToBuf(char (&buf)[n], const std::string& str, size_t start_point) noexcept {
-  uint32_t len = str.size();
-  memcpy((void*)&buf[start_point], &len, sizeof(len));
-  start_point += sizeof(len);
-  memcpy((void*)&buf[start_point], str.data(), len);
-  start_point += len;
-  assert(start_point <= n);
-  return start_point;
-}
-
-// tested
-template <size_t n, typename T>
-requires NotString<T> inline size_t ParseFromBuf(char (&buf)[n], T& t, size_t start_point) noexcept {
-  memcpy(&t, &buf[start_point], sizeof(T));
-  start_point += sizeof(T);
-  assert(start_point <= n);
-  return start_point;
-}
-
-// tested
-template <size_t n>
-inline size_t ParseStrFromBuf(char (&buf)[n], std::string& t, size_t start_point) {
-  uint32_t len = 0;
-  memcpy(&len, &buf[start_point], sizeof(len));
-  start_point += sizeof(len);
-  t.clear();
-  if (len == 0) {
-    return start_point;
-  }
-  char* ptr = new char[len];
-  memcpy(ptr, &buf[start_point], len);
-  start_point += len;
-  assert(start_point <= n);
-  t.append(ptr, len);
-  delete[] ptr;
-  return start_point;
-}
-
-// end helper function
-
 class BlockManager;
 
 struct InsertInfo {
@@ -185,9 +113,9 @@ class BlockBase {
   bool Parse() noexcept {
     assert(BufInited() == true);
     uint32_t offset = 0;
-    offset = ::bptree::ParseFromBuf(buf_, crc_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, index_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, height_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, crc_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, index_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, height_, offset);
     ParseFromBuf(offset);
     if (CheckForDamage() == true) {
       return false;
@@ -203,9 +131,9 @@ class BlockBase {
     assert(BufInited() == true);
     assert(dirty_ == true);
     uint32_t offset = 0;
-    offset = ::bptree::ParseFromBuf(buf_, crc_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, index_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, height_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, crc_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, index_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, height_, offset);
     UpdateMetaData(offset);
   }
 
@@ -333,36 +261,36 @@ class Block : public BlockBase {
   void Print();
 
   void FlushToBuf(size_t offset) noexcept override {
-    offset = AppendToBuf(buf_, next_free_index_, offset);
-    offset = AppendToBuf(buf_, prev_, offset);
-    offset = AppendToBuf(buf_, next_, offset);
-    offset = AppendToBuf(buf_, key_size_, offset);
-    offset = AppendToBuf(buf_, value_size_, offset);
-    offset = AppendToBuf(buf_, head_entry_, offset);
-    offset = AppendToBuf(buf_, free_list_, offset);
+    offset = util::AppendToBuf(buf_, next_free_index_, offset);
+    offset = util::AppendToBuf(buf_, prev_, offset);
+    offset = util::AppendToBuf(buf_, next_, offset);
+    offset = util::AppendToBuf(buf_, key_size_, offset);
+    offset = util::AppendToBuf(buf_, value_size_, offset);
+    offset = util::AppendToBuf(buf_, head_entry_, offset);
+    offset = util::AppendToBuf(buf_, free_list_, offset);
   }
 
   void ParseFromBuf(size_t offset) noexcept override {
-    offset = ::bptree::ParseFromBuf(buf_, next_free_index_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, prev_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, next_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, key_size_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, value_size_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, head_entry_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, free_list_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, next_free_index_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, prev_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, next_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, key_size_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, value_size_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, head_entry_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, free_list_, offset);
     if (next_free_index_ == not_free_flag) {
       UpdateKvViewByBuf();
     }
   }
 
   void UpdateMetaData(size_t offset) noexcept override {
-    offset = ::bptree::ParseFromBuf(buf_, next_free_index_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, prev_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, next_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, key_size_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, value_size_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, head_entry_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, free_list_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, next_free_index_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, prev_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, next_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, key_size_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, value_size_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, head_entry_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, free_list_, offset);
   }
 
   void UpdateKvViewByBuf() {
@@ -659,22 +587,22 @@ class SuperBlock : public BlockBase {
         current_max_block_index_(1) {}
 
   void FlushToBuf(size_t offset) noexcept override {
-    offset = AppendToBuf(buf_, root_index_, offset);
-    offset = AppendToBuf(buf_, key_size_, offset);
-    offset = AppendToBuf(buf_, value_size_, offset);
-    offset = AppendToBuf(buf_, free_block_head_, offset);
-    offset = AppendToBuf(buf_, free_block_size_, offset);
-    offset = AppendToBuf(buf_, current_max_block_index_, offset);
+    offset = util::AppendToBuf(buf_, root_index_, offset);
+    offset = util::AppendToBuf(buf_, key_size_, offset);
+    offset = util::AppendToBuf(buf_, value_size_, offset);
+    offset = util::AppendToBuf(buf_, free_block_head_, offset);
+    offset = util::AppendToBuf(buf_, free_block_size_, offset);
+    offset = util::AppendToBuf(buf_, current_max_block_index_, offset);
   }
 
   void ParseFromBuf(size_t offset) noexcept override {
     assert(BufInited() == true);
-    offset = ::bptree::ParseFromBuf(buf_, root_index_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, key_size_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, value_size_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, free_block_head_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, free_block_size_, offset);
-    offset = ::bptree::ParseFromBuf(buf_, current_max_block_index_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, root_index_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, key_size_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, value_size_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, free_block_head_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, free_block_size_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, current_max_block_index_, offset);
   }
 
   std::string CreateMetaChangeWalLog(const std::string& meta_name, uint32_t value);

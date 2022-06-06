@@ -58,8 +58,8 @@ class WriteAheadLog {
     Data,
   };
 
-  WriteAheadLog(const std::string& file_name, const std::function<void(uint64_t, MsgType, std::string)>& handler)
-      : next_wal_sequence_(0), next_log_number_(0), file_name_(file_name), f_(nullptr), log_handler_(handler) {}
+  WriteAheadLog(const std::string& file_name)
+      : next_wal_sequence_(0), next_log_number_(0), file_name_(file_name), f_(nullptr) {}
 
   void OpenFile() {
     if (util::FileNotExist(file_name_)) {
@@ -67,6 +67,10 @@ class WriteAheadLog {
     } else {
       f_ = util::OpenFile(file_name_);
     }
+  }
+
+  void RegisterLogHandler(const std::function<void(uint64_t, MsgType, std::string)>& handler) {
+    log_handler_ = handler;
   }
 
   void Recover() { recover(f_); }
@@ -154,6 +158,9 @@ class WriteAheadLog {
    */
   void recover(FILE* f) {
     assert(f != nullptr);
+    if (!log_handler_) {
+      throw BptreeExecption("invalid log handler");
+    }
     std::unordered_map<uint64_t, std::vector<LogEntry>> undo_list;
     while (true) {
       bool read_error = false;
