@@ -1,7 +1,7 @@
 include(FetchContent)
 
 set(GT_GIT_TAG release-1.11.0)
-set(GT_GIT_URL git@github.com:google/googletest.git)
+set(GT_GIT_URL https://ghproxy.com/https://github.com/google/googletest)
 
 if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ext/googletest)
   FetchContent_Declare(

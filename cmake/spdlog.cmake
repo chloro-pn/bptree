@@ -1,7 +1,7 @@
 include(FetchContent)
 
 set(SPDLOG_GIT_TAG v1.10.0)
-set(SPDLOG_GIT_URL git@github.com:gabime/spdlog.git)
+set(SPDLOG_GIT_URL https://ghproxy.com/https://github.com/gabime/spdlog)
 
 if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ext/spdlog)
   FetchContent_Declare(

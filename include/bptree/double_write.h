@@ -33,7 +33,7 @@ class DoubleWrite {
     fseek(f_, 0, SEEK_SET);
     int ret = fread(block->GetBuf(), block_size, 1, f_);
     if (ret != 1) {
-      throw BptreeExecption("dw file read fail : " + std::string(strerror(errno)));
+      throw BptreeExecption("dw file read fail : {}", strerror(errno));
     }
   }
 

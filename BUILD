@@ -10,6 +10,7 @@ cc_library(
     "@crc32//:crc32c",
     "@spdlog//:spdlog",
     "@mpmcqueue//:mpmc_queue",
+    "@fmt//:fmt",
   ]
 )
 
@@ -52,5 +53,6 @@ cc_test(
     "@crc32//:crc32c",
     "@googletest//:gtest",
     "@googletest//:gtest_main",
+    "@fmt//:fmt",
   ],
 )

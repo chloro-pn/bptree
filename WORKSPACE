@@ -26,3 +26,15 @@ new_git_repository(
     branch = "master",
     build_file = "//third_party:mpmc_queue.build",
 )
+
+git_repository(
+    name = "fmt",
+    tag = "8.1.1",
+    remote = "https://github.com/fmtlib/fmt",
+    patch_cmds = [
+        "mv support/bazel/.bazelrc .bazelrc",
+        "mv support/bazel/.bazelversion .bazelversion",
+        "mv support/bazel/BUILD.bazel BUILD.bazel",
+        "mv support/bazel/WORKSPACE.bazel WORKSPACE.bazel",
+    ],
+)

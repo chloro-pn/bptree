@@ -53,27 +53,36 @@ enum class ExistFlag {
 };
 
 struct BlockManagerOption {
+  // 指定db的名字
   std::string db_name;
+
+  // 指定权限，只读、只写或者读写，不满足权限的操作会导致抛出BptreeException异常
   Mode mode;
+
+  // 如果db不存在，根据neflag决定是创建一个新的db或者抛出异常
   NotExistFlag neflag;
+  // 如果db存在，根据eflag决定是成功返回或者抛出异常
   ExistFlag eflag;
+
+  // 以下两个参数指定了key和value的大小，note: 本库只支持固定大小的kv存储
+  // 如果key和value的大小之和过大，导致单个block中无法存储1个kv对，则会抛出异常
   uint32_t key_size;
   uint32_t value_size;
+
+  // 可选的自定义cmp，db中会按照该cmp指定的顺序对key-value按序存储
   std::shared_ptr<Comparator> cmp = std::make_shared<Comparator>();
+
+  // 指定是否定期生成checkpoint并清理wal日志，目前仅测试用
   bool no_reset_wal = false;
 };
 
-inline std::string CreateWalNameByDB(const std::string& db_name) {
-  return db_name + "/" + db_name + "_wal.log";
-}
+inline std::string CreateWalNameByDB(const std::string& db_name) { return db_name + "/" + db_name + "_wal.log"; }
 
 inline std::string CreateDWfileNameByDB(const std::string& db_name) {
   return db_name + "/" + db_name + "_double_write.log";
 }
 
-inline std::string CreateDbFileNameByDB(const std::string& db_name) {
-  return db_name + "/" + db_name + ".db";
-}
+inline std::string CreateDbFileNameByDB(const std::string& db_name) { return db_name + "/" + db_name + ".db"; }
 
 namespace detail {
 
@@ -96,6 +105,10 @@ class BlockManager {
   friend class BlockBase;
   friend class SuperBlock;
 
+  /**
+   * @brief 构造或者打开db，根据option参数决定
+   * @param option 见BlockManagerOption注释
+   */
   BPTREE_INTERFACE explicit BlockManager(BlockManagerOption option)
       : mode_(option.mode),
         comparator_(option.cmp),
@@ -107,16 +120,13 @@ class BlockManager {
         no_reset_wal_(option.no_reset_wal),
         queue_(operation_queue_size),
         stop_(false) {
-    block_cache_.SetFreeNotify([this](const uint32_t& key, Block& value) -> void {
-      this->OnCacheDelete(key, value);
-    });
-    wal_.RegisterLogHandler([this](uint64_t seq, MsgType type, const std::string log) -> void {
-      this->HandleWal(seq, type, log);
-    });
+    block_cache_.SetFreeNotify([this](const uint32_t& key, Block& value) -> void { this->OnCacheDelete(key, value); });
+    wal_.RegisterLogHandler(
+        [this](uint64_t seq, MsgType type, const std::string log) -> void { this->HandleWal(seq, type, log); });
     RegisterMetrics();
     if (util::FileNotExist(db_name_)) {
       if (option.neflag == NotExistFlag::ERROR) {
-        throw BptreeExecption("db ", db_name_, " not exist");
+        throw BptreeExecption("db {} not exist", db_name_);
       }
       if (option.key_size == 0 || option.value_size == 0) {
         throw BptreeExecption(
@@ -148,7 +158,7 @@ class BlockManager {
       BPTREE_LOG_INFO("create db {} succ", db_name_);
     } else {
       if (option.eflag == ExistFlag::ERROR) {
-        throw BptreeExecption("db ", db_name_, " already exists");
+        throw BptreeExecption("db {} already exists", db_name_);
       }
       f_ = util::OpenFile(CreateDbFileNameByDB(db_name_));
       wal_.OpenFile();
@@ -163,7 +173,14 @@ class BlockManager {
 
   BPTREE_INTERFACE ~BlockManager() { FlushToFile(); }
 
-  // 单点查找，如果db中存在key，返回对应的value，否则返回""
+  /**
+   * @brief 接口函数，根据key在db中查询value
+   * @param key 用户指定的key
+   * @return
+   *      - 空字符串 指定的key在db中不存在
+   *      - 非空字符串，为key对应的value
+   * @note 用户需要有读权限，key的大小需要和构造时指定的key_size一致，否则抛出异常
+   */
   BPTREE_INTERFACE std::string Get(const std::string& key) {
     if (mode_ != Mode::R && mode_ != Mode::WR) {
       throw BptreeExecption("Permission denied");
@@ -177,7 +194,15 @@ class BlockManager {
     return result;
   }
 
-  // 范围查找，key为需要查找的起始点，对后续的每个kv调用functor，根据返回值确定结束范围查找 or 跳过 or 选择
+  /**
+   * @brief 接口函数，范围查找，key为需要查找的起始位置，对后续的每个key-value调用functor，
+   根据返回值决定结束查找 or 跳过这个key-value or 选择这个key-value并继续
+
+   * @param key 范围查找的key
+   * @param functor 选择functor
+   * @return 查找到的key-value对
+   * @note 用户需要有读权限，key的大小需要和构造时指定的key_size一致，否则抛出异常
+   */
   BPTREE_INTERFACE std::vector<std::pair<std::string, std::string>> GetRange(
       const std::string& key, std::function<GetRangeOption(const Entry& entry)> functor) {
     if (mode_ != Mode::R && mode_ != Mode::WR) {
@@ -218,7 +243,16 @@ class BlockManager {
     return result;
   }
 
-  // 插入，如果key已经存在返回false，并不做任何操作，否则执行插入并返回true
+  /**
+   * @brief 接口函数，将key-value插入db
+   * @param key 用户指定的key
+   * @param value 用户指定的value
+   * @param seq 事务编号，用于将多个读写操作组合成单个事务进行wal记录，用户使用默认值即可
+   * @return
+   *      - true 插入成功
+   *      - false key已经在db中存在，插入失败
+   * @note 用户需要有写权限，key和value的大小需要和构造时指定的key_size和value_size一致，否则抛出异常
+   */
   BPTREE_INTERFACE bool Insert(const std::string& key, const std::string& value, uint64_t seq = no_wal_sequence) {
     if (mode_ != Mode::W && mode_ != Mode::WR) {
       throw BptreeExecption("Permission denied");
@@ -251,7 +285,15 @@ class BlockManager {
     return result;
   }
 
-  // 删除, 返回被删除的value，如果没有找到，则返回空字符串
+  /**
+   * @brief 接口函数，删除key指定的kv对
+   * @param key 用户指定的key
+   * @param seq 事务编号，用于将多个读写操作组合成单个事务进行wal记录，用户使用默认值即可
+   * @return
+   *      - 空字符串 指定的key在db中不存在
+   *      - 非空字符串，删除掉的value值
+   * @note 用户需要有写权限，key的大小需要和构造时指定的key_size一致，否则抛出异常
+   */
   BPTREE_INTERFACE std::string Delete(const std::string& key, uint64_t seq = no_wal_sequence) {
     if (mode_ != Mode::W && mode_ != Mode::WR) {
       throw BptreeExecption("Permission denied");
@@ -274,7 +316,16 @@ class BlockManager {
     return ret.old_v_;
   }
 
-  // 更新，返回更新前的旧值，如果key不存在返回空字符串
+  /**
+   * @brief 接口函数，将db中的key对应的值更新为value
+   * @param key 用户指定的key
+   * @param value 用户指定的value
+   * @param seq 事务编号，用于将多个读写操作组合成单个事务进行wal记录，用户使用默认值即可
+   * @return
+   *      - 空字符串 指定的key在db中不存在
+   *      - 非空字符串，更新前的value值
+   * @note 用户需要有写权限，key的大小需要和构造时指定的key_size一致，否则抛出异常
+   */
   BPTREE_INTERFACE std::string Update(const std::string& key, const std::string& value,
                                       uint64_t seq = no_wal_sequence) {
     if (mode_ != Mode::W && mode_ != Mode::WR) {
@@ -308,7 +359,7 @@ class BlockManager {
       return;
     }
     if (super_block_.current_max_block_index_ < index) {
-      throw BptreeExecption("request block's index invalid : ", std::to_string(index));
+      throw BptreeExecption("request block's index invalid : {}", index);
     }
     auto block = GetBlock(index);
     block.Get().Print();
@@ -424,14 +475,14 @@ class BlockManager {
       bool succ = new_block_1.Get().AppendKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view,
                                              no_wal_sequence);
       if (succ == false) {
-        throw BptreeExecption("block broken, insert nth kv : ", std::to_string(i));
+        throw BptreeExecption("block broken, insert {} th kv", i);
       }
     }
     for (int i = half_count; i < block->GetKVView().size(); ++i) {
       bool succ = new_block_2.Get().AppendKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view,
                                              no_wal_sequence);
       if (succ == false) {
-        throw BptreeExecption("block broken, insert nth kv : ", std::to_string(i));
+        throw BptreeExecption("block broken, insert {} th kv", i);
       }
     }
     // 插入之后记录新的数据快照，作为redo log
@@ -444,29 +495,29 @@ class BlockManager {
   }
 
   void SplitTheRootBlock(const std::string& key, const std::string& value, uint64_t sequence) {
-      GetMetricSet().GetAs<Counter>("root_block_split_count")->Add();
-      // 根节点的分裂
-      uint32_t old_root_index = super_block_.root_index_;
-      auto old_root = GetBlock(super_block_.root_index_);
-      uint32_t old_root_height = old_root.Get().GetHeight();
-      auto new_blocks = BlockSplit(&old_root.Get(), sequence);
+    GetMetricSet().GetAs<Counter>("root_block_split_count")->Add();
+    // 根节点的分裂
+    uint32_t old_root_index = super_block_.root_index_;
+    auto old_root = GetBlock(super_block_.root_index_);
+    uint32_t old_root_height = old_root.Get().GetHeight();
+    auto new_blocks = BlockSplit(&old_root.Get(), sequence);
 
-      auto left_block = GetBlock(new_blocks.first);
-      auto right_block = GetBlock(new_blocks.second);
-      // update link
-      left_block.Get().SetNext(new_blocks.second, sequence);
-      right_block.Get().SetPrev(new_blocks.first, sequence);
-      // insert
-      if (key <= left_block.Get().GetMaxKey()) {
-        auto ret = left_block.Get().InsertKv(key, value, sequence);
-      } else {
-        right_block.Get().InsertKv(key, value, sequence);
-      }
-      // update root
-      old_root.Get().Clear(sequence);
-      old_root.Get().SetHeight(old_root_height + 1, sequence);
-      old_root.Get().AppendKv(left_block.Get().GetMaxKey(), util::ConstructIndexByNum(new_blocks.first), sequence);
-      old_root.Get().AppendKv(right_block.Get().GetMaxKey(), util::ConstructIndexByNum(new_blocks.second), sequence);
+    auto left_block = GetBlock(new_blocks.first);
+    auto right_block = GetBlock(new_blocks.second);
+    // update link
+    left_block.Get().SetNext(new_blocks.second, sequence);
+    right_block.Get().SetPrev(new_blocks.first, sequence);
+    // insert
+    if (key <= left_block.Get().GetMaxKey()) {
+      auto ret = left_block.Get().InsertKv(key, value, sequence);
+    } else {
+      right_block.Get().InsertKv(key, value, sequence);
+    }
+    // update root
+    old_root.Get().Clear(sequence);
+    old_root.Get().SetHeight(old_root_height + 1, sequence);
+    old_root.Get().AppendKv(left_block.Get().GetMaxKey(), util::ConstructIndexByNum(new_blocks.first), sequence);
+    old_root.Get().AppendKv(right_block.Get().GetMaxKey(), util::ConstructIndexByNum(new_blocks.second), sequence);
   }
 
   uint32_t BlockMerge(const Block* b1, const Block* b2, uint64_t sequence) {
@@ -539,8 +590,7 @@ class BlockManager {
       super_block_.SetFreeBlockSize(super_block_.free_block_size_ - 1, sequence);
       // 这个wal日志的意义是，在回滚的时候可能已经成功分配了新的block并刷盘，因此需要 确保这个块被回收
       if (sequence != no_wal_sequence) {
-        std::string redo_log =
-            CreateAllocBlockWalLog(result, height, super_block_.key_size_, super_block_.value_size_);
+        std::string redo_log = CreateAllocBlockWalLog(result, height, super_block_.key_size_, super_block_.value_size_);
         std::string undo_log = block.Get().CreateMetaChangeWalLog("next_free_index", super_block_.free_block_head_);
         wal_.WriteLog(sequence, redo_log, undo_log);
       }
@@ -697,7 +747,7 @@ class BlockManager {
       dw_.ReadBlock(new_block.get());
       succ = new_block->Parse();
       if (succ == false || new_block->GetIndex() != index) {
-        throw BptreeExecption("inner error, can't recover block from double_write file : " + std::to_string(index));
+        throw BptreeExecption("inner error, can't recover block from double_write file : {}", index);
       }
     }
     BPTREE_LOG_DEBUG("load block {} from disk succ", index);
@@ -760,7 +810,7 @@ class BlockManager {
         break;
       }
       default: {
-        throw BptreeExecption("invalid wal type ", std::to_string(wal_type));
+        throw BptreeExecption("invalid wal type : {}", wal_type);
       }
     }
   }
@@ -770,7 +820,7 @@ class BlockManager {
     auto block = std::unique_ptr<Block>(new Block(*this, index, height, key_size, value_size));
     auto wrapper = block_cache_.Get(index);
     if (wrapper.Exist() == true) {
-      throw BptreeExecption("inner error, duplicate block " + std::to_string(index));
+      throw BptreeExecption("inner error, duplicate block : {}", index);
     }
     block_cache_.Insert(index, std::move(block));
   }

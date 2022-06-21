@@ -1,6 +1,6 @@
 include(FetchContent)
 
-set(QUEUE_GIT_URL git@github.com:rigtorp/MPMCQueue.git)
+set(QUEUE_GIT_URL https://ghproxy.com/https://github.com/rigtorp/MPMCQueue)
 
 if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ext/mpmcqueue)
   FetchContent_Declare(

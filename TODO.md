@@ -19,3 +19,4 @@ todo:
 * 文件锁、提供只读访问模式和互斥写模式 [todo]
 * 支持MassTree的变长key机制 [todo]
 * 支持自定义key比较函数的机制 [done]
+* 支持linux direct-IO机制 [todo]

@@ -233,7 +233,7 @@ class Block : public BlockBase {
   // tested
   std::string GetMaxKey() const {
     if (kv_view_.empty() == true) {
-      throw BptreeExecption("get max key from empty block ", std::to_string(GetIndex()));
+      throw BptreeExecption("get max key from empty block {}", GetIndex());
     }
     return std::string(kv_view_.back().key_view);
   }
@@ -241,7 +241,7 @@ class Block : public BlockBase {
   // note: 只有在持有block的wrapper的时候才保证正确，否则可能导致结果指向资源已经被释放的地址
   std::string_view GetMaxKeyAsView() const {
     if (kv_view_.empty() == true) {
-      throw BptreeExecption("get max key from empty block ", std::to_string(GetIndex()));
+      throw BptreeExecption("get max key from empty block {}", GetIndex());
     }
     return kv_view_.back().key_view;
   }
@@ -621,7 +621,7 @@ class SuperBlock : public BlockBase {
     } else if (meta_name == "free_block_size") {
       free_block_size_ = value;
     } else {
-      throw BptreeExecption("invalid super meta name : " + meta_name);
+      throw BptreeExecption("invalid super meta name : {}", meta_name);
     }
   }
 

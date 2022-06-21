@@ -560,7 +560,7 @@ void Block::HandleMetaUpdateWal(const std::string& meta_name, uint32_t value) {
   } else if (meta_name == "next") {
     next_ = value;
   } else {
-    throw BptreeExecption("invalid block meta name : " + meta_name);
+    throw BptreeExecption("invalid block meta name : {}", meta_name);
   }
 }
 

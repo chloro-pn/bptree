@@ -20,22 +20,22 @@ void RollBack(const std::vector<std::unique_ptr<Operation>>& operations_, BlockM
         auto old_v = manager_.Delete(op.key, seq_);
         // 这里的删除操作应该是成功的
         if (old_v != op.value) {
-          throw BptreeExecption("transaction rollback fail, invalid delete ", op.key, " ", old_v, " ", op.value);
+          throw BptreeExecption("transaction rollback fail, invalid delete ({}, {}). old_v == {}", op.key, old_v,
+                                op.value);
         }
       }
     } else if (op.type == OperationType::Delete) {
       if (op.value != "") {
         auto succ = manager_.Insert(op.key, op.value, seq_);
         if (succ == false) {
-          throw BptreeExecption("transaction rollback fail, invalid insert ", op.key);
+          throw BptreeExecption("transaction rollback fail, invalid insert {}", op.key);
         }
       }
     } else if (op.type == OperationType::Update) {
       if (op.value != "") {
-        BPTREE_LOG_INFO("rollvack update operation : {}, {}", op.key, op.value);
         auto old_v = manager_.Update(op.key, op.value, seq_);
         if (old_v == "") {
-          throw BptreeExecption("transaction rollback fail, invalid update ", op.key);
+          throw BptreeExecption("transaction rollback fail, invalid update {}", op.key);
         }
       }
     } else {
