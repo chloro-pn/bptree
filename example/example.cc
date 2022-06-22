@@ -42,12 +42,12 @@ int main() {
   option.key_size = 10;
   option.value_size = 20;
   bptree::BlockManager manager(option);
-  auto kvs = ConstructRandomKv(100000, 10, 20);
+  auto kvs = ConstructRandomKv(40000, 10, 20);
   for (auto& each : kvs) {
     manager.Insert(each.key, each.value);
   }
   BPTREE_LOG_INFO("insert complete");
-  for (size_t i = 0; i < 100000; ++i) {
+  for (size_t i = 0; i < 40000; ++i) {
     auto v = manager.Get(kvs[i].key);
     if (v != kvs[i].value) {
       BPTREE_LOG_ERROR("insert-get check fail");

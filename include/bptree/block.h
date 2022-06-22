@@ -27,6 +27,8 @@ constexpr uint32_t super_height = std::numeric_limits<uint32_t>::max();
 
 constexpr uint32_t not_free_flag = std::numeric_limits<uint32_t>::max();
 
+constexpr uint32_t linux_alignment = 512;
+
 class BlockManager;
 
 struct InsertInfo {
@@ -104,10 +106,14 @@ struct UpdateInfo {
 class BlockBase {
  public:
   BlockBase(BlockManager& manager) noexcept
-      : manager_(manager), crc_(0), index_(0), height_(0), buf_init_(false), dirty_(true) {}
+      : manager_(manager), buf_(nullptr), crc_(0), index_(0), height_(0), buf_init_(false), dirty_(true) {
+    buf_ = new ((std::align_val_t)linux_alignment) char[block_size];
+  }
 
   BlockBase(BlockManager& manager, uint32_t index, uint32_t height) noexcept
-      : manager_(manager), crc_(0), index_(index), height_(height), buf_init_(false), dirty_(false) {}
+      : manager_(manager), buf_(nullptr), crc_(0), index_(index), height_(height), buf_init_(false), dirty_(false) {
+    buf_ = new ((std::align_val_t)linux_alignment) char[block_size];
+  }
 
   // 在从文件中读取数据到buf后进行parse，如果crc32校验失败返回false，否则返回true
   bool Parse() noexcept {
@@ -172,11 +178,12 @@ class BlockBase {
       std::cerr << "warn : block " << index_ << " destruct in dirty state, maybe throw exception or some inner error!"
                 << std::endl;
     }
+    delete[] buf_;
   }
 
  protected:
   BlockManager& manager_;
-  char buf_[block_size];
+  char* buf_;
   bool dirty_;
 
  private:

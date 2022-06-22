@@ -16,6 +16,7 @@
 #include "bptree/double_write.h"
 #include "bptree/exception.h"
 #include "bptree/fault_injection.h"
+#include "bptree/file.h"
 #include "bptree/key_comparator.h"
 #include "bptree/log.h"
 #include "bptree/metric/metric.h"
@@ -139,14 +140,14 @@ class BlockManager {
       super_block_.free_block_head_ = 0;
       super_block_.current_max_block_index_ = 1;
       util::CreateDir(db_name_);
-      f_ = util::CreateFile(CreateDbFileNameByDB(db_name_));
+      f_ = FileHandler::CreateFile(CreateDbFileNameByDB(db_name_));
       wal_.OpenFile();
       dw_.OpenFile();
       auto root_block = std::unique_ptr<Block>(
           new Block(*this, super_block_.root_index_, 1, super_block_.key_size_, super_block_.value_size_));
       block_cache_.Insert(super_block_.root_index_, std::move(root_block));
 
-      FlushSuperBlockToFile(f_);
+      FlushSuperBlockToFile();
 
       uint64_t seq = wal_.RequestSeq();
       wal_.Begin(seq);
@@ -160,7 +161,7 @@ class BlockManager {
       if (option.eflag == ExistFlag::ERROR) {
         throw BptreeExecption("db {} already exists", db_name_);
       }
-      f_ = util::OpenFile(CreateDbFileNameByDB(db_name_));
+      f_ = FileHandler::OpenFile(CreateDbFileNameByDB(db_name_));
       wal_.OpenFile();
       dw_.OpenFile();
       ParseSuperBlockFromFile();
@@ -324,7 +325,7 @@ class BlockManager {
    * @return
    *      - 空字符串 指定的key在db中不存在
    *      - 非空字符串，更新前的value值
-   * @note 用户需要有写权限，key的大小需要和构造时指定的key_size一致，否则抛出异常
+   * @note 用户需要有写权限，key和value的大小需要和构造时指定的key_size和value_size一致，否则抛出异常
    */
   BPTREE_INTERFACE std::string Update(const std::string& key, const std::string& value,
                                       uint64_t seq = no_wal_sequence) {
@@ -462,6 +463,7 @@ class BlockManager {
 
  private:
   std::pair<uint32_t, uint32_t> BlockSplit(const Block* block, uint64_t sequence) {
+    BPTREE_LOG_DEBUG("block split begin");
     GetMetricSet().GetAs<Counter>("block_split_count")->Add();
     uint32_t new_block_1_index = AllocNewBlock(block->GetHeight(), sequence);
     uint32_t new_block_2_index = AllocNewBlock(block->GetHeight(), sequence);
@@ -577,15 +579,18 @@ class BlockManager {
     if (super_block_.free_block_head_ == 0) {
       super_block_.SetCurrentMaxBlockIndex(super_block_.current_max_block_index_ + 1, sequence);
       result = super_block_.current_max_block_index_;
+      BPTREE_LOG_DEBUG("extend max block index to {}", result);
       if (sequence != no_wal_sequence) {
         std::string redo_log = CreateAllocBlockWalLog(result, height, super_block_.key_size_, super_block_.value_size_);
         std::string undo_log = "";
         wal_.WriteLog(sequence, redo_log, undo_log);
       }
     } else {
+      BPTREE_LOG_DEBUG("get free block head {}", super_block_.free_block_head_);
       auto block = GetBlock(super_block_.free_block_head_);
       super_block_.SetFreeBlockHead(block.Get().GetNextFreeIndex(), sequence);
       result = block.Get().GetIndex();
+      BPTREE_LOG_DEBUG("reuse block index {}", result);
       assert(super_block_.free_block_size_ > 0);
       super_block_.SetFreeBlockSize(super_block_.free_block_size_ - 1, sequence);
       // 这个wal日志的意义是，在回滚的时候可能已经成功分配了新的block并刷盘，因此需要 确保这个块被回收
@@ -638,18 +643,17 @@ class BlockManager {
 
   void ReadBlockFromFile(BlockBase* block, uint32_t index) {
     block->BufInit();
-    util::FileReadAt(f_, block->GetBuf(), block_size, index * block_size);
+    f_.Read(block->GetBuf(), block_size, index * block_size);
   }
 
   void FlushToFile() {
-    if (f_ == nullptr) {
+    if (f_.Closed()) {
       return;
     }
-    FlushSuperBlockToFile(f_);
+    FlushSuperBlockToFile();
     bool succ = block_cache_.Clear();
     assert(succ == true);
-    fclose(f_);
-    f_ = nullptr;
+    f_.Close();
     dw_.Close();
     auto& cond = GetFaultInjection().GetTheLastCheckPointFailCondition();
     if (cond && cond() == true) {
@@ -667,7 +671,7 @@ class BlockManager {
     if (dirty == true) {
       BPTREE_LOG_DEBUG("block {} flush to disk, dirty", index);
       this->dw_.WriteBlock(&block);
-      this->FlushBlockToFile(this->f_, block.GetIndex(), &block);
+      this->FlushBlockToFile(block.GetIndex(), &block);
     } else {
       BPTREE_LOG_DEBUG("block {} don't flush to disk, clean", index);
     }
@@ -676,30 +680,28 @@ class BlockManager {
   /*
    * 支持故障注入，可选择的写入部分数据，模拟断电过程中partial write情况
    */
-  void FlushBlockToFile(FILE* f, uint32_t index, BlockBase* block) {
+  void FlushBlockToFile(uint32_t index, BlockBase* block) {
     auto& condition = GetFaultInjection().GetPartialWriteCondition();
     if (condition) {
       bool ret = condition(index);
       if (ret == true) {
-        FlushBlockToFilePartialWriteAndExit(f, index, block);
+        FlushBlockToFilePartialWriteAndExit(index, block);
         return;
       }
     }
-    util::FileWriteAt(f, block->GetBuf(), block_size, index * block_size);
-    fflush(f);
+    f_.Write(block->GetBuf(), block_size, index * block_size);
   }
 
-  void FlushBlockToFilePartialWriteAndExit(FILE* f, uint32_t index, BlockBase* block) {
-    util::FileWriteAt(f, block->GetBuf(), block_size / 2, index * block_size);
-    fflush(f);
+  void FlushBlockToFilePartialWriteAndExit(uint32_t index, BlockBase* block) {
+    f_.Write(block->GetBuf(), block_size / 2, index * block_size);
     std::exit(-1);
   }
 
-  void FlushSuperBlockToFile(FILE* f) {
+  void FlushSuperBlockToFile() {
     super_block_.SetDirty();
     super_block_.Flush();
     dw_.WriteBlock(&super_block_);
-    FlushBlockToFile(f, 0, &super_block_);
+    FlushBlockToFile(0, &super_block_);
   }
 
   void ParseSuperBlockFromFile() {
@@ -724,7 +726,7 @@ class BlockManager {
       BPTREE_LOG_INFO("recover super block succ, flush to db immediately");
       super_block_.SetDirty();
       super_block_.Flush();
-      FlushBlockToFile(f_, 0, &super_block_);
+      FlushBlockToFile(0, &super_block_);
     }
   }
 
@@ -886,7 +888,7 @@ class BlockManager {
                 current += 1;
                 BPTREE_LOG_DEBUG("block {} flush to disk, dirty", key);
                 this->dw_.WriteBlock(&block);
-                this->FlushBlockToFile(this->f_, block.GetIndex(), &block);
+                this->FlushBlockToFile(block.GetIndex(), &block);
               } else {
                 BPTREE_LOG_DEBUG("block {} don't flush to disk, clean", key);
               }
@@ -907,7 +909,7 @@ class BlockManager {
   // 2. 调用wal_.ResetLogFile()函数
   void CreateCheckPoint() {
     GetMetricSet().GetAs<Counter>("create_checkpoint_count")->Add();
-    FlushSuperBlockToFile(f_);
+    FlushSuperBlockToFile();
     Counter flush_block_count("flush_block_count");
     block_cache_.ForeachValueInCache([this, &flush_block_count](const uint32_t& key, Block& block) {
       bool dirty = block.Flush();
@@ -915,7 +917,7 @@ class BlockManager {
         flush_block_count.Add();
         BPTREE_LOG_DEBUG("block {} flush to disk, dirty", key);
         this->dw_.WriteBlock(&block);
-        this->FlushBlockToFile(this->f_, block.GetIndex(), &block);
+        this->FlushBlockToFile(block.GetIndex(), &block);
       } else {
         BPTREE_LOG_DEBUG("block {} don't flush to disk, clean");
       }
@@ -951,7 +953,7 @@ class BlockManager {
   LRUCache<uint32_t, Block> block_cache_;
   std::string db_name_;
   SuperBlock super_block_;
-  FILE* f_;
+  FileHandler f_;
   WriteAheadLog wal_;
   DoubleWrite dw_;
   FaultInjection fj_;

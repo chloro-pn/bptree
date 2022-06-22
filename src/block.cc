@@ -513,17 +513,19 @@ DeleteInfo Block::DoMerge(uint32_t child_index, uint64_t sequence, const std::st
     uint32_t next_index = right_child.Get().GetNext();
     if (prev_index != 0) {
       UpdateBlockNextIndex(prev_index, new_block_index, sequence);
+      new_block.Get().SetPrev(prev_index, sequence);
     }
     if (next_index != 0) {
       UpdateBlockPrevIndex(next_index, new_block_index, sequence);
+      new_block.Get().SetNext(next_index, sequence);
     }
     // todo 优化，这里也可以使用string_view
     UpdateByIndex(left_child_index, new_block.Get().GetMaxKey(), util::ConstructIndexByNum(new_block_index), sequence);
     DeleteKvByIndex(right_child_index, sequence);
     left_child.UnBind();
     right_child.UnBind();
-    manager_.DeallocBlock(left_block_index, sequence);
-    manager_.DeallocBlock(right_block_index, sequence);
+    manager_.DeallocBlock(left_block_index, sequence, false);
+    manager_.DeallocBlock(right_block_index, sequence, false);
     BPTREE_LOG_DEBUG("block merge from {} and {} to {}", left_block_index, right_block_index, new_block_index)
   } else {
     BPTREE_LOG_DEBUG("block {} and {} rebalance", left_block_index, right_block_index);

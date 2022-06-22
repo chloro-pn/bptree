@@ -121,6 +121,9 @@ class WriteAheadLog {
     assert(writing_wal_.count(sequence) == 1);
     writing_wal_.erase(sequence);
     WriteEndLog(sequence);
+    // 这里仅仅将日志从libc刷到内核page cache中，并没有真正持久化
+    // todo : 支持fsync
+    fflush(f_);
   }
 
   // 调用方首先保证所有写入wal的日志对应的操作都已经写入磁盘，然后调用本函数
