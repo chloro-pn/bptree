@@ -21,8 +21,6 @@
 #include "bptree/log.h"
 #include "bptree/metric/metric.h"
 #include "bptree/metric/metric_set.h"
-#include "bptree/queue.h"
-#include "bptree/transaction.h"
 #include "bptree/util.h"
 #include "bptree/wal.h"
 
@@ -92,7 +90,6 @@ enum class LogType : uint8_t {
   BLOCK_META,
   BLOCK_DATA,
   BLOCK_ALLO,
-  BLOCK_DEAL,
   BLOCK_VIEW,
 };
 
@@ -118,9 +115,7 @@ class BlockManager {
         super_block_(*this, option.key_size, option.value_size),
         wal_(CreateWalNameByDB(db_name_)),
         dw_(CreateDWfileNameByDB(db_name_)),
-        no_reset_wal_(option.no_reset_wal),
-        queue_(operation_queue_size),
-        stop_(false) {
+        no_reset_wal_(option.no_reset_wal) {
     block_cache_.SetFreeNotify([this](const uint32_t& key, Block& value) -> void { this->OnCacheDelete(key, value); });
     wal_.RegisterLogHandler(
         [this](uint64_t seq, MsgType type, const std::string log) -> void { this->HandleWal(seq, type, log); });
@@ -140,7 +135,7 @@ class BlockManager {
       super_block_.free_block_head_ = 0;
       super_block_.current_max_block_index_ = 1;
       util::CreateDir(db_name_);
-      f_ = FileHandler::CreateFile(CreateDbFileNameByDB(db_name_));
+      f_ = FileHandler::CreateFile(CreateDbFileNameByDB(db_name_), FileType::DIRECT);
       wal_.OpenFile();
       dw_.OpenFile();
       auto root_block = std::unique_ptr<Block>(
@@ -161,13 +156,15 @@ class BlockManager {
       if (option.eflag == ExistFlag::ERROR) {
         throw BptreeExecption("db {} already exists", db_name_);
       }
-      f_ = FileHandler::OpenFile(CreateDbFileNameByDB(db_name_));
+      f_ = FileHandler::OpenFile(CreateDbFileNameByDB(db_name_), FileType::DIRECT);
       wal_.OpenFile();
       dw_.OpenFile();
       ParseSuperBlockFromFile();
       wal_.Recover();
       // 这个时候cache中的block buf都已经通过wal日志恢复，但是kvview还没有变更，因此需要对cache中的block更新kvview
       block_cache_.ForeachValueInCache([](const uint32_t& index, Block& block) { block.UpdateKvViewByBuf(); });
+      // 生成一个快照
+      CreateCheckPoint();
       BPTREE_LOG_INFO("open db {} succ", db_name_);
     }
   }
@@ -393,7 +390,7 @@ class BlockManager {
     auto wrapper = block_cache_.Get(index);
     if (wrapper.Exist() == false) {
       GetMetricSet().GetAs<Counter>("load_block_count")->Add();
-      auto block = LoadBlock(index, false);
+      auto block = LoadBlock(index);
       block_cache_.Insert(index, std::move(block));
       return block_cache_.Get(index);
     }
@@ -403,63 +400,6 @@ class BlockManager {
   uint32_t GetRootIndex() const noexcept { return super_block_.root_index_; }
 
   uint32_t GetMaxBlockIndex() const noexcept { return super_block_.current_max_block_index_; }
-
-  Queue<Operation>& GetQueue() { return queue_; }
-
-  void Stop() { stop_.store(true); }
-
-  void Run() {
-    // 记录了每个事务的历史记录，用于回滚
-    std::unordered_map<uint64_t, std::vector<std::unique_ptr<Operation>>> txs_;
-    while (stop_.load() == false) {
-      std::vector<std::unique_ptr<Operation>> ops = queue_.TryPop();
-      for (auto& each : ops) {
-        std::unique_ptr<Operation> result(new Operation());
-        result->sequence = each->sequence;
-        result->type = each->type;
-        auto notify_queue = each->notify_queue_;
-        uint64_t seq = each->sequence;
-        if (each->type == OperationType::Begin) {
-          wal_.Begin(seq);
-          assert(txs_.count(seq) == 0);
-          txs_[seq].push_back(result->CopyWithoutQueue());
-        } else if (each->type == OperationType::End) {
-          wal_.End(seq);
-          txs_.erase(seq);
-        } else if (each->type == OperationType::Get) {
-          auto value = Get(each->key);
-          result->key = each->key;
-          result->value = value;
-          assert(txs_.count(seq) == 1);
-          txs_[seq].push_back(result->CopyWithoutQueue());
-        } else if (each->type == OperationType::Insert) {
-          bool succ = Insert(each->key, each->value, seq);
-          result->key = each->key;
-          result->value = succ ? each->value : "";
-          assert(txs_.count(seq) == 1);
-          txs_[seq].push_back(result->CopyWithoutQueue());
-        } else if (each->type == OperationType::Delete) {
-          auto old_v = Delete(each->key, seq);
-          result->key = each->key;
-          result->value = old_v;
-          assert(txs_.count(seq) == 1);
-          txs_[seq].push_back(result->CopyWithoutQueue());
-        } else if (each->type == OperationType::Update) {
-          auto old_v = Update(each->key, each->value, seq);
-          result->key = each->key;
-          result->value = old_v;
-          assert(txs_.count(seq) == 1);
-          txs_[seq].push_back(result->CopyWithoutQueue());
-        } else if (each->type == OperationType::RollBack) {
-          // todo rollback
-          RollBack(txs_[seq], *this, seq);
-          txs_.erase(seq);
-        }
-        notify_queue->Push(std::move(result));
-      }
-      sleep(std::chrono::milliseconds(10));
-    }
-  }
 
  private:
   std::pair<uint32_t, uint32_t> BlockSplit(const Block* block, uint64_t sequence) {
@@ -490,8 +430,10 @@ class BlockManager {
     // 插入之后记录新的数据快照，作为redo log
     std::string block_1_redo = CreateBlockViewWalLog(new_block_1_index, new_block_1.Get().CreateDataView());
     std::string block_2_redo = CreateBlockViewWalLog(new_block_2_index, new_block_2.Get().CreateDataView());
-    wal_.WriteLog(sequence, block_1_redo, block_1_undo);
-    wal_.WriteLog(sequence, block_2_redo, block_2_undo);
+    auto log_num_1 = wal_.WriteLog(sequence, block_1_redo, block_1_undo);
+    auto log_num_2 = wal_.WriteLog(sequence, block_2_redo, block_2_undo);
+    new_block_1.Get().UpdateLogNumber(log_num_1);
+    new_block_2.Get().UpdateLogNumber(log_num_2);
     BPTREE_LOG_DEBUG("block split, from {} to {} and {}", block->GetIndex(), new_block_1_index, new_block_2_index);
     return {new_block_1_index, new_block_2_index};
   }
@@ -542,7 +484,8 @@ class BlockManager {
       }
     }
     std::string block_redo = CreateBlockViewWalLog(new_block_index, new_block.Get().CreateDataView());
-    wal_.WriteLog(sequence, block_redo, block_undo);
+    auto log_num = wal_.WriteLog(sequence, block_redo, block_undo);
+    new_block.Get().UpdateLogNumber(log_num);
     BPTREE_LOG_DEBUG("block merge, from {} and {} to {}", b1->GetIndex(), b2->GetIndex(), new_block_index);
     return new_block_index;
   }
@@ -554,13 +497,6 @@ class BlockManager {
     util::StringAppender(result, height);
     util::StringAppender(result, key_size);
     util::StringAppender(result, value_size);
-    return result;
-  }
-
-  std::string CreateDeallocBlockWalLog(uint32_t index) {
-    std::string result;
-    util::StringAppender(result, detail::LogTypeToUint8T(detail::LogType::BLOCK_DEAL));
-    util::StringAppender(result, index);
     return result;
   }
 
@@ -580,34 +516,45 @@ class BlockManager {
       super_block_.SetCurrentMaxBlockIndex(super_block_.current_max_block_index_ + 1, sequence);
       result = super_block_.current_max_block_index_;
       BPTREE_LOG_DEBUG("extend max block index to {}", result);
+      auto new_block =
+          std::unique_ptr<Block>(new Block(*this, result, height, super_block_.key_size_, super_block_.value_size_));
       if (sequence != no_wal_sequence) {
         std::string redo_log = CreateAllocBlockWalLog(result, height, super_block_.key_size_, super_block_.value_size_);
         std::string undo_log = "";
-        wal_.WriteLog(sequence, redo_log, undo_log);
+        auto log_number = wal_.WriteLog(sequence, redo_log, undo_log);
+        new_block->UpdateLogNumber(log_number);
       }
+      BPTREE_LOG_DEBUG("alloc new block {}", result);
+      block_cache_.Insert(result, std::move(new_block));
+      return result;
     } else {
-      BPTREE_LOG_DEBUG("get free block head {}", super_block_.free_block_head_);
-      auto block = GetBlock(super_block_.free_block_head_);
-      super_block_.SetFreeBlockHead(block.Get().GetNextFreeIndex(), sequence);
-      result = block.Get().GetIndex();
-      BPTREE_LOG_DEBUG("reuse block index {}", result);
-      assert(super_block_.free_block_size_ > 0);
-      super_block_.SetFreeBlockSize(super_block_.free_block_size_ - 1, sequence);
-      // 这个wal日志的意义是，在回滚的时候可能已经成功分配了新的block并刷盘，因此需要 确保这个块被回收
-      if (sequence != no_wal_sequence) {
-        std::string redo_log = CreateAllocBlockWalLog(result, height, super_block_.key_size_, super_block_.value_size_);
-        std::string undo_log = block.Get().CreateMetaChangeWalLog("next_free_index", super_block_.free_block_head_);
-        wal_.WriteLog(sequence, redo_log, undo_log);
-      }
-      block.UnBind();
-      // result这个block读出来只是为了获取下一个free block的index，不会有change操作，因此从cache中删除时不用刷盘
-      bool succ = block_cache_.Delete(result, false);
-      assert(succ == true);
+      return ReuseFreeBlock(height, sequence);
     }
+  }
+
+  uint32_t ReuseFreeBlock(uint32_t height, uint64_t sequence) {
+    assert(super_block_.free_block_head_ != 0);
+    BPTREE_LOG_DEBUG("get free block head {}", super_block_.free_block_head_);
+    auto block = GetBlock(super_block_.free_block_head_);
+    super_block_.SetFreeBlockHead(block.Get().GetNextFreeIndex(), sequence);
+    uint32_t result = block.Get().GetIndex();
+    BPTREE_LOG_DEBUG("reuse block index {}", result);
+    assert(super_block_.free_block_size_ > 0);
+    super_block_.SetFreeBlockSize(super_block_.free_block_size_ - 1, sequence);
+
     auto new_block =
         std::unique_ptr<Block>(new Block(*this, result, height, super_block_.key_size_, super_block_.value_size_));
+    if (sequence != no_wal_sequence) {
+      std::string redo_log = CreateBlockViewWalLog(result, new_block->CreateDataView());
+      std::string undo_log = CreateBlockViewWalLog(result, block.Get().CreateDataView());
+      auto log_number = wal_.WriteLog(sequence, redo_log, undo_log);
+      new_block->UpdateLogNumber(log_number);
+    }
+    block.UnBind();
+    // result这个block读出来只是为了获取下一个free block的index，不会有change操作，因此从cache中删除时不用刷盘
+    bool succ = block_cache_.Delete(result, false);
+    assert(succ == true);
     block_cache_.Insert(result, std::move(new_block));
-    BPTREE_LOG_DEBUG("alloc new block {}", result);
     return result;
   }
 
@@ -626,30 +573,29 @@ class BlockManager {
         prev_block.Get().SetNext(next, sequence);
       }
     }
-    block.Get().Clear(sequence);
+    // 在wal层面，不需要有block删除的概念，因为block的删除只是把元数据字段中的next free index设置为新值而已
     block.Get().SetNextFreeIndex(super_block_.free_block_head_, sequence);
     block.UnBind();
     super_block_.SetFreeBlockHead(index, sequence);
     super_block_.SetFreeBlockSize(super_block_.free_block_size_ + 1, sequence);
     bool succ = block_cache_.Delete(index, true);
     assert(succ == true);
-    if (sequence != no_wal_sequence) {
-      std::string redo_log = CreateDeallocBlockWalLog(index);
-      std::string undo_log = "";
-      wal_.WriteLog(sequence, redo_log, undo_log);
-    }
     BPTREE_LOG_DEBUG("dealloc block {}", index);
   }
 
-  void ReadBlockFromFile(BlockBase* block, uint32_t index) {
-    block->BufInit();
-    f_.Read(block->GetBuf(), block_size, index * block_size);
+  char* ReadBlockFromFile(uint32_t index) {
+    char* buf = new ((std::align_val_t)linux_alignment) char[block_size];
+    f_.Read(buf, block_size, index * block_size);
+    return buf;
   }
+
+  void ReadBlockFromFile(SuperBlock& sb) { f_.Read(sb.GetBuf(), block_size, sb.GetIndex() * block_size); }
 
   void FlushToFile() {
     if (f_.Closed()) {
       return;
     }
+    wal_.Flush();
     FlushSuperBlockToFile();
     bool succ = block_cache_.Clear();
     assert(succ == true);
@@ -670,8 +616,10 @@ class BlockManager {
     bool dirty = block.Flush();
     if (dirty == true) {
       BPTREE_LOG_DEBUG("block {} flush to disk, dirty", index);
-      this->dw_.WriteBlock(&block);
-      this->FlushBlockToFile(block.GetIndex(), &block);
+      // 确保block上所有修改操作对应的日志已经持久化到磁盘
+      this->wal_.EnsureLogFlush(block.GetLogNumber());
+      this->dw_.WriteBlock(block);
+      this->FlushBlockToFile(block);
     } else {
       BPTREE_LOG_DEBUG("block {} don't flush to disk, clean", index);
     }
@@ -680,7 +628,8 @@ class BlockManager {
   /*
    * 支持故障注入，可选择的写入部分数据，模拟断电过程中partial write情况
    */
-  void FlushBlockToFile(uint32_t index, BlockBase* block) {
+  void FlushBlockToFile(const BlockBase& block) {
+    uint32_t index = block.GetIndex();
     auto& condition = GetFaultInjection().GetPartialWriteCondition();
     if (condition) {
       bool ret = condition(index);
@@ -689,64 +638,59 @@ class BlockManager {
         return;
       }
     }
-    f_.Write(block->GetBuf(), block_size, index * block_size);
+    f_.Write(block.GetBuf(), block_size, index * block_size);
   }
 
-  void FlushBlockToFilePartialWriteAndExit(uint32_t index, BlockBase* block) {
-    f_.Write(block->GetBuf(), block_size / 2, index * block_size);
+  void FlushBlockToFilePartialWriteAndExit(uint32_t index, const BlockBase& block) {
+    f_.Write(block.GetBuf(), block_size / 2, index * block_size);
     std::exit(-1);
   }
 
   void FlushSuperBlockToFile() {
-    super_block_.SetDirty();
-    super_block_.Flush();
-    dw_.WriteBlock(&super_block_);
-    FlushBlockToFile(0, &super_block_);
+    super_block_.SetDirty(false);
+    super_block_.Flush(false);
+    wal_.EnsureLogFlush(super_block_.GetLogNumber());
+    dw_.WriteBlock(super_block_);
+    FlushBlockToFile(super_block_);
   }
 
   void ParseSuperBlockFromFile() {
     bool succ = true;
     try {
-      ReadBlockFromFile(&super_block_, 0);
+      ReadBlockFromFile(super_block_);
     } catch (const BptreeExecption& e) {
       succ = false;
     }
     if (succ == true) {
+      super_block_.NeedToParse();
       succ = super_block_.Parse();
     }
     if (succ == false) {
       BPTREE_LOG_WARN("super block crc32 check fail, try to recover from double_write file");
       // crc校验失败，尝试从double write文件中恢复，并写回db文件
-      dw_.ReadBlock(&super_block_);
+      dw_.ReadBlock(super_block_.GetBuf());
+      super_block_.NeedToParse();
       succ = super_block_.Parse();
       if (succ == false || super_block_.GetIndex() != 0) {
         throw BptreeExecption("inner error, can't recover super block from double_write file");
       }
       // 如果成功，立刻覆盖掉错误的数据
       BPTREE_LOG_INFO("recover super block succ, flush to db immediately");
-      super_block_.SetDirty();
-      super_block_.Flush();
-      FlushBlockToFile(0, &super_block_);
+      super_block_.SetDirty(false);
+      super_block_.Flush(false);
+      FlushBlockToFile(super_block_);
     }
   }
 
   // 读到后进行crc校验，如果失败则从dw文件中恢复
-  std::unique_ptr<Block> LoadBlock(uint32_t index, bool recovering) {
-    std::unique_ptr<Block> new_block = std::unique_ptr<Block>(new Block(*this));
-    if (recovering == false) {
-      ReadBlockFromFile(new_block.get(), index);
-      bool succ = new_block->Parse();
-      if (succ == false) {
-        throw BptreeExecption("load block, crc32 check error");
-      }
-      return new_block;
-    }
-
-    ReadBlockFromFile(new_block.get(), index);
+  std::unique_ptr<Block> LoadBlock(uint32_t index) {
+    char* buf = ReadBlockFromFile(index);
+    std::unique_ptr<Block> new_block = std::unique_ptr<Block>(new Block(*this, buf));
     bool succ = new_block->Parse();
     if (succ == false) {
       BPTREE_LOG_WARN("parse block {} error : crc32 check fail, try to recover from double_write file", index);
-      dw_.ReadBlock(new_block.get());
+      dw_.ReadBlock(buf);
+      new_block->NeedToParse();
       succ = new_block->Parse();
       if (succ == false || new_block->GetIndex() != index) {
         throw BptreeExecption("inner error, can't recover block from double_write file : {}", index);
@@ -757,16 +701,19 @@ class BlockManager {
   }
 
   void HandleWal(uint64_t sequence, MsgType type, const std::string& log) {
-    // 五种类型的日志：
+    if (log.empty() == true) {
+      return;
+    }
+    // 四种类型的日志：
     // superblock meta update
     // block alloc
-    // block dealloc
     // block meta update
     // block data update
     size_t offset = 0;
     uint8_t wal_type = util::StringParser<uint8_t>(log, offset);
     switch (wal_type) {
       case detail::LogTypeToUint8T(detail::LogType::SUPER_META): {
+        BPTREE_LOG_DEBUG("handle super meta log");
         uint32_t index = util::StringParser<uint32_t>(log, offset);
         std::string meta_name = util::StringParser(log, offset);
         uint32_t value = util::StringParser<uint32_t>(log, offset);
@@ -775,6 +722,7 @@ class BlockManager {
         break;
       }
       case detail::LogTypeToUint8T(detail::LogType::BLOCK_META): {
+        BPTREE_LOG_DEBUG("handle block meta log");
         uint32_t index = util::StringParser<uint32_t>(log, offset);
         std::string meta_name = util::StringParser(log, offset);
         uint32_t value = util::StringParser<uint32_t>(log, offset);
@@ -783,6 +731,7 @@ class BlockManager {
         break;
       }
       case detail::LogTypeToUint8T(detail::LogType::BLOCK_DATA): {
+        BPTREE_LOG_DEBUG("handle block data log");
         uint32_t index = util::StringParser<uint32_t>(log, offset);
         uint32_t region_offset = util::StringParser<uint32_t>(log, offset);
         std::string region = util::StringParser(log, offset);
@@ -791,6 +740,7 @@ class BlockManager {
         break;
       }
       case detail::LogTypeToUint8T(detail::LogType::BLOCK_ALLO): {
+        BPTREE_LOG_DEBUG("handle block_alloc log");
         uint32_t index = util::StringParser<uint32_t>(log, offset);
         uint32_t height = util::StringParser<uint32_t>(log, offset);
         uint32_t key_size = util::StringParser<uint32_t>(log, offset);
@@ -799,12 +749,8 @@ class BlockManager {
         HandleBlockAllocWal(sequence, index, height, key_size, value_size);
         break;
       }
-      case detail::LogTypeToUint8T(detail::LogType::BLOCK_DEAL): {
-        uint32_t index = util::StringParser<uint32_t>(log, offset);
-        HandleBlockDeallocWal(sequence, index);
-        break;
-      }
       case detail::LogTypeToUint8T(detail::LogType::BLOCK_VIEW): {
+        BPTREE_LOG_DEBUG("handle block view log");
         uint32_t index = util::StringParser<uint32_t>(log, offset);
         std::string view = util::StringParser(log, offset);
         assert(offset == log.size());
@@ -820,111 +766,56 @@ class BlockManager {
   void HandleBlockAllocWal(uint64_t sequence, uint32_t index, uint32_t height, uint32_t key_size, uint32_t value_size) {
     assert(key_size == super_block_.key_size_ && value_size == super_block_.value_size_);
     auto block = std::unique_ptr<Block>(new Block(*this, index, height, key_size, value_size));
-    auto wrapper = block_cache_.Get(index);
-    if (wrapper.Exist() == true) {
-      throw BptreeExecption("inner error, duplicate block : {}", index);
-    }
+    // 恢复阶段在alloc一个block的时候，之前被删除的block可能仍然在内存中（因为dealloc只是改变了一个元数据），因此这里首先删除。
+    block_cache_.Delete(index, true);
     block_cache_.Insert(index, std::move(block));
   }
 
-  void HandleBlockDeallocWal(uint64_t sequence, uint32_t index) { block_cache_.Delete(index, true); }
-
   void HandleBlockMetaUpdateWal(uint64_t sequence, uint32_t index, const std::string& name, uint32_t value) {
-    auto wrapper = block_cache_.Get(index);
-    if (wrapper.Exist() == false) {
-      BPTREE_LOG_DEBUG("block meta update load block {}", index);
-      auto block = LoadBlock(index, true);
-      block_cache_.Insert(index, std::move(block));
-      wrapper = block_cache_.Get(index);
-    }
+    auto wrapper = GetBlock(index);
     wrapper.Get().HandleMetaUpdateWal(name, value);
   }
 
   void HandleBlockDataUpdateWal(uint64_t sequence, uint32_t index, uint32_t offset, const std::string& region) {
-    auto wrapper = block_cache_.Get(index);
-    if (wrapper.Exist() == false) {
-      BPTREE_LOG_DEBUG("block data update load block {}", index);
-      auto block = LoadBlock(index, true);
-      block_cache_.Insert(index, std::move(block));
-      wrapper = block_cache_.Get(index);
-    }
+    auto wrapper = GetBlock(index);
     wrapper.Get().HandleDataUpdateWal(offset, region);
   }
 
   void HandleBlockViewWal(uint64_t sequence, uint32_t index, const std::string& view) {
-    auto wrapper = block_cache_.Get(index);
-    if (wrapper.Exist() == false) {
-      BPTREE_LOG_DEBUG("block view load block {}", index);
-      auto block = LoadBlock(index, true);
-      block_cache_.Insert(index, std::move(block));
-      wrapper = block_cache_.Get(index);
-    }
+    auto wrapper = GetBlock(index);
     wrapper.Get().HandleViewWal(view);
   }
 
-  // 每隔一段时间，刷新cache中的部分脏页到磁盘，必要的时候创建快照
+  // 每隔2048个操作生成新的check point
   void AfterCommitTx() {
-    uint64_t tx_count = GetMetricSet().GetAs<Counter>("insert_count")->GetValue();
-    tx_count += GetMetricSet().GetAs<Counter>("update_count")->GetValue();
-    tx_count += GetMetricSet().GetAs<Counter>("delete_count")->GetValue();
-    size_t total_block_count = block_cache_.GetEntrySize();
-    // 如果cache中block的数量本来就很小，则不进行刷盘处理
-    bool too_small = total_block_count <= block_cache_.GetCapacity() * 0.2;
-    if (tx_count % 128 == 0 && tx_count % 2048 != 0 && !too_small) {
-      double dirty_block_count = GetMetricSet().GetAs<Gauge>("dirty_block_count")->GetValue();
-      double rate = dirty_block_count / total_block_count;
-      if (rate >= 0.4) {
-        size_t flush_count = dirty_block_count * 0.2;
-        BPTREE_LOG_DEBUG("flush {} blocks to disk", flush_count);
-        // todo, 将部分脏页刷盘，按照lru列表中的倒序顺序进行，因为排到后面的页面有更大的可能不被修改
-        size_t current = 0;
-        block_cache_.ForeachValueInTheReverseOrderOfLRUList(
-            [this, flush_count, &current](const uint32_t& key, Block& block) -> bool {
-              if (current == flush_count) {
-                return false;
-              }
-              bool dirty = block.Flush();
-              if (dirty == true) {
-                current += 1;
-                BPTREE_LOG_DEBUG("block {} flush to disk, dirty", key);
-                this->dw_.WriteBlock(&block);
-                this->FlushBlockToFile(block.GetIndex(), &block);
-              } else {
-                BPTREE_LOG_DEBUG("block {} don't flush to disk, clean", key);
-              }
-              return true;
-            });
-      }
-      return;
-    }
-    // 固定的每隔2048个事务生成一个checkpoint
+    static uint64_t tx_count = 0;
+    tx_count += 1;
     if (tx_count % 2048 == 0 && no_reset_wal_ == false) {
       CreateCheckPoint();
     }
   }
 
-  // 为当前存储内容创建一个快照，注意：不能有未完成的事务，原因：创建完快照后之前的日志全部删除，
-  // 此时如果有执行到一半的事务，则快照点前的部分的日志已经消失，但是事务不确定是提交的，如果之后由于故障导致事务回滚，则会导致快照点之前的日志丢失而无法回滚
-  // 1. 将所有cache中的block刷回磁盘(但是并不从cache中delete)
-  // 2. 调用wal_.ResetLogFile()函数
+  // 为当前存储内容创建一个快照
   void CreateCheckPoint() {
+    BPTREE_LOG_INFO("create chcek point succ");
     GetMetricSet().GetAs<Counter>("create_checkpoint_count")->Add();
+    // 所有wal日志刷盘
+    wal_.Flush();
     FlushSuperBlockToFile();
-    Counter flush_block_count("flush_block_count");
-    block_cache_.ForeachValueInCache([this, &flush_block_count](const uint32_t& key, Block& block) {
+    block_cache_.ForeachValueInCache([this](const uint32_t& key, Block& block) {
       bool dirty = block.Flush();
       if (dirty == true) {
-        flush_block_count.Add();
-        BPTREE_LOG_DEBUG("block {} flush to disk, dirty", key);
-        this->dw_.WriteBlock(&block);
-        this->FlushBlockToFile(block.GetIndex(), &block);
-      } else {
-        BPTREE_LOG_DEBUG("block {} don't flush to disk, clean");
+        this->dw_.WriteBlock(block);
+        this->FlushBlockToFile(block);
       }
     });
-    BPTREE_LOG_DEBUG("create check point : flush {} blocks to disk", flush_block_count.GetValue());
-    // 此时所有修改操作都已经刷入磁盘，可以安全的删除wal日志
-    wal_.ResetLogFile();
+    // 所有数据刷盘
+    f_.Flush();
+    // 重置wal文件
+    if (no_reset_wal_ == false) {
+      wal_.ResetLogFile();
+    }
+    metric_set_.GetAs<Gauge>("dirty_block_count")->PrintToLog();
   }
 
   void RegisterMetrics() {
@@ -961,7 +852,5 @@ class BlockManager {
   MetricSet metric_set_;
   // 关闭清空wal日志操作
   bool no_reset_wal_;
-  Queue<Operation> queue_;
-  std::atomic<bool> stop_;
 };
 }  // namespace bptree

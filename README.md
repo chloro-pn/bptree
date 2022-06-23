@@ -1,23 +1,14 @@
 ## bptree ##
-bptree是一个持久化到磁盘的b+树实现
+bptree是一个持久化到磁盘的b+树实现，支持Get、Delete、Insert、Update和GetRange操作。通过redo-undo日志+double write机制+check point机制保证单个操作的原子性和持久性。
 
 ## feature ##
 目前已经实现的特性有：
 * 空闲磁盘页的管理
 * block lru-cache
-* block 通过双向链表连接
-* double write机制防止partial write导致的block损坏
-* block crc32校验
-* 支持Get、Delete、Insert、Update和GetRange等接口
-* 基于更新日志记录的恢复机制
-* tool目录下面提供了两个工具，分别用来根据key查找其所在的block index（如果存在的话），以及根据block index打印详细信息等功能
-* check point
-* 基于undo日志的事务支持（目前仅支持串行隔离级别)
-
-目前正在实现的特性有：
-* 实现监控和统计模块，增强bptree的可观测性 [doing]
-* 日志缓冲区 [todo]
-* 并发控制 [todo]
+* double write机制防止partial write
+* 基于redo-undo日志的恢复机制（保证单个操作的原子性和持久性）
+* 使用direct-io避免page cache
+* check-point机制
 
 ## build ##
 在构建之前确保你的编译环境支持c++20标准
@@ -30,7 +21,7 @@ https://softacheck.com/app/docs/chloro-pn/bptree/
 bazel test ...
 
 ## example ##
-参考目录example下的example.cc文件，随机生成10w个kv项并插入bptree，然后随机删除其中1w项，最后对比bptree中存储的数据与生成的数据是否一致。
+参考目录example下的example.cc文件，随机生成4w个kv项并插入bptree，然后随机删除其中1w项，最后对比bptree中存储的数据与生成的数据是否一致。
 
 执行结果参考如下:
 ```

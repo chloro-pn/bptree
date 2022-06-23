@@ -105,37 +105,66 @@ struct UpdateInfo {
 
 class BlockBase {
  public:
-  BlockBase(BlockManager& manager) noexcept
-      : manager_(manager), buf_(nullptr), crc_(0), index_(0), height_(0), buf_init_(false), dirty_(true) {
-    buf_ = new ((std::align_val_t)linux_alignment) char[block_size];
-  }
+  /**
+   * @brief BlockBase构造函数，新建一个从磁盘导入的block时调用，index和height等在之后parse时解析得到
+   * @param manager BlockManager引用
+   * @param buf 存储着磁盘数据的buf，大小需要至少为block_size
+   */
+  BlockBase(BlockManager& manager, char* buf) noexcept
+      : manager_(manager),
+        buf_(buf),
+        dirty_(true),
+        need_to_parse_(true),
+        crc_(0),
+        index_(0),
+        height_(0),
+        change_log_number_(0) {}
 
+  /**
+   * @brief BlockBase构造函数，新建一个空的block时调用
+   * @param manager BlockManager引用
+   * @param index 该block的index值
+   * @param height 该block的高度
+   */
   BlockBase(BlockManager& manager, uint32_t index, uint32_t height) noexcept
-      : manager_(manager), buf_(nullptr), crc_(0), index_(index), height_(height), buf_init_(false), dirty_(false) {
+      : manager_(manager),
+        buf_(nullptr),
+        dirty_(true),
+        need_to_parse_(false),
+        crc_(0),
+        index_(index),
+        height_(height),
+        change_log_number_(0) {
     buf_ = new ((std::align_val_t)linux_alignment) char[block_size];
   }
 
-  // 在从文件中读取数据到buf后进行parse，如果crc32校验失败返回false，否则返回true
+  void NeedToParse() noexcept { need_to_parse_ = true; }
+
+  /**
+   * @brief 从磁盘导入的block当填充buf后，需要调用本函数解析元数据和kv数据
+   */
   bool Parse() noexcept {
-    assert(BufInited() == true);
+    // 只有从磁盘导入的block才能Parse
+    assert(need_to_parse_ == true);
     uint32_t offset = 0;
     offset = ::bptree::util::ParseFromBuf(buf_, crc_, offset);
-    offset = ::bptree::util::ParseFromBuf(buf_, index_, offset);
-    offset = ::bptree::util::ParseFromBuf(buf_, height_, offset);
-    ParseFromBuf(offset);
     if (CheckForDamage() == true) {
       return false;
     }
-    dirty_ = false;
+    offset = ::bptree::util::ParseFromBuf(buf_, index_, offset);
+    offset = ::bptree::util::ParseFromBuf(buf_, height_, offset);
+    ParseFromBuf(offset);
     BPTREE_LOG_DEBUG("block {} parse succ", index_);
+    // 当Parse之后，磁盘数据和内存数据一致，dirty修改为false
+    dirty_ = false;
+    need_to_parse_ = false;
     return true;
   }
 
-  // 在恢复阶段由于执行wal导致buf更新，但数据还是旧的情况
-  // 和Parse的区别在于：不检测crc
+  /**
+   * @brief 根据buf数据更新内存中的元数据，不检测crc
+   */
   void UpdateMeta() noexcept {
-    assert(BufInited() == true);
-    assert(dirty_ == true);
     uint32_t offset = 0;
     offset = ::bptree::util::ParseFromBuf(buf_, crc_, offset);
     offset = ::bptree::util::ParseFromBuf(buf_, index_, offset);
@@ -143,7 +172,7 @@ class BlockBase {
     UpdateMetaData(offset);
   }
 
-  bool Flush() noexcept;
+  bool Flush(bool update_dirty_block_count = true) noexcept;
 
   uint32_t GetUsedSpace() const noexcept { return sizeof(crc_) + sizeof(index_) + sizeof(height_); }
 
@@ -151,9 +180,13 @@ class BlockBase {
   virtual void ParseFromBuf(size_t offset) noexcept = 0;
   virtual void UpdateMetaData(size_t offset) noexcept {}
 
-  void BufInit() noexcept { buf_init_ = true; }
+  void UpdateLogNumber(uint64_t log_num) {
+    if (change_log_number_ < log_num) {
+      change_log_number_ = log_num;
+    }
+  }
 
-  bool BufInited() const noexcept { return buf_init_ == true; }
+  uint64_t GetLogNumber() const noexcept { return change_log_number_; }
 
   bool CheckForDamage() const noexcept {
     uint32_t crc = crc32((const char*)&buf_[sizeof(crc_)], block_size - sizeof(crc_));
@@ -163,15 +196,17 @@ class BlockBase {
     return false;
   }
 
+  const char* GetBuf() const noexcept { return buf_; }
+
+  char* GetBuf() noexcept { return buf_; }
+
   uint32_t GetIndex() const noexcept { return index_; }
 
   uint32_t GetHeight() const noexcept { return height_; }
 
   uint32_t& getHeight() noexcept { return height_; };
 
-  char* GetBuf() noexcept { return buf_; }
-
-  void SetDirty();
+  void SetDirty(bool update_dirty_block_count = true);
 
   virtual ~BlockBase() {
     if (dirty_ == true) {
@@ -184,13 +219,15 @@ class BlockBase {
  protected:
   BlockManager& manager_;
   char* buf_;
+  // 标识从磁盘导入的数据是否被修改过，如果是新建的block，初始化为true。如果是从磁盘导入的block，初始化为false。
   bool dirty_;
+  bool need_to_parse_;
 
  private:
-  bool buf_init_;
   uint32_t crc_;
   uint32_t index_;
   uint32_t height_;
+  uint32_t change_log_number_;
 };
 
 struct Entry {
@@ -201,27 +238,11 @@ struct Entry {
 
 class Block : public BlockBase {
  public:
-  // 新建的block构造函数
-  Block(BlockManager& manager, uint32_t index, uint32_t height, uint32_t key_size, uint32_t value_size)
-      : BlockBase(manager, index, height),
-        next_free_index_(not_free_flag),
-        prev_(0),
-        next_(0),
-        key_size_(key_size),
-        value_size_(value_size),
-        head_entry_(0),
-        free_list_(1) {
-    if (GetHeight() != 0) {
-      value_size_ = sizeof(uint32_t);
-    }
-    if (GetMaxEntrySize() < 1) {
-      throw BptreeExecption("key and value occupy too much space");
-    }
-    InitEmptyEntrys(no_wal_sequence);
-  }
+  // 新建一个空的block的构造函数
+  Block(BlockManager& manager, uint32_t index, uint32_t height, uint32_t key_size, uint32_t value_size);
 
-  // 从文件中读取
-  explicit Block(BlockManager& manager) noexcept : BlockBase(manager) {}
+  // 新建一个从磁盘导入的block的构造函数
+  explicit Block(BlockManager& manager, char* buf) noexcept : BlockBase(manager, buf) {}
 
   Block(const Block&) = delete;
   Block(Block&&) = delete;
@@ -300,6 +321,9 @@ class Block : public BlockBase {
     offset = ::bptree::util::ParseFromBuf(buf_, free_list_, offset);
   }
 
+  /**
+   * @brief 根据buf中的数据更新kv_view_的数据
+   */
   void UpdateKvViewByBuf() {
     kv_view_.clear();
     uint32_t entry_index = head_entry_;
@@ -603,7 +627,6 @@ class SuperBlock : public BlockBase {
   }
 
   void ParseFromBuf(size_t offset) noexcept override {
-    assert(BufInited() == true);
     offset = ::bptree::util::ParseFromBuf(buf_, root_index_, offset);
     offset = ::bptree::util::ParseFromBuf(buf_, key_size_, offset);
     offset = ::bptree::util::ParseFromBuf(buf_, value_size_, offset);

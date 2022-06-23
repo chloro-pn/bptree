@@ -12,7 +12,6 @@
 #include <thread>
 
 #include "bptree/exception.h"
-#include "bptree/queue.h"
 
 #define BPTREE_INTERFACE
 
@@ -189,35 +188,5 @@ inline size_t ParseStrFromBuf(const char* buf, std::string& t, size_t start_poin
 }  // namespace util
 
 constexpr uint64_t no_wal_sequence = std::numeric_limits<uint64_t>::max();
-
-enum class OperationType {
-  Begin,
-  End,
-  RollBack,
-  Get,
-  GetRange,
-  Insert,
-  Update,
-  Delete,
-};
-
-struct Operation {
-  OperationType type;
-  std::string key;
-  std::string value;
-  std::shared_ptr<Queue<Operation>> notify_queue_;
-  uint64_t sequence;
-
-  std::unique_ptr<Operation> CopyWithoutQueue() const {
-    std::unique_ptr<Operation> result(new Operation());
-    result->type = type;
-    result->key = key;
-    result->value = value;
-    result->sequence = sequence;
-    return result;
-  }
-};
-
-inline void sleep(std::chrono::milliseconds ms) { std::this_thread::sleep_for(ms); }
 
 }  // namespace bptree

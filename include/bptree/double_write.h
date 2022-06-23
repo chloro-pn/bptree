@@ -18,18 +18,15 @@ class DoubleWrite {
 
   void OpenFile() {
     if (util::FileNotExist(file_name_)) {
-      f_ = FileHandler::CreateFile(file_name_, true);
+      f_ = FileHandler::CreateFile(file_name_, FileType::DIRECT_AND_SYNC);
     } else {
-      f_ = FileHandler::OpenFile(file_name_, true);
+      f_ = FileHandler::OpenFile(file_name_, FileType::DIRECT_AND_SYNC);
     }
   }
 
-  void WriteBlock(BlockBase* block) { f_.Write(block->GetBuf(), block_size, 0); }
+  void WriteBlock(const BlockBase& block) { f_.Write(block.GetBuf(), block_size, 0); }
 
-  void ReadBlock(BlockBase* block) {
-    block->BufInit();
-    f_.Read(block->GetBuf(), block_size, 0);
-  }
+  void ReadBlock(char* buf) { f_.Read(buf, block_size, 0); }
 
   void Close() { f_.Close(); }
 

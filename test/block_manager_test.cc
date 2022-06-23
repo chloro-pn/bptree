@@ -2,7 +2,6 @@
 
 #include <thread>
 
-#include "bptree/transaction.h"
 #include "gtest/gtest.h"
 
 TEST(block_manager, base) {
@@ -77,50 +76,4 @@ TEST(block_manager, getrange) {
     expect_result.push_back({key, "value"});
   }
   EXPECT_EQ(expect_result, kvs);
-}
-
-TEST(block_manager, transaction) {
-  bptree::BlockManagerOption option;
-  option.db_name = "test_transaction";
-  option.neflag = bptree::NotExistFlag::CREATE;
-  option.eflag = bptree::ExistFlag::ERROR;
-  option.mode = bptree::Mode::WR;
-  option.key_size = 1;
-  option.value_size = 5;
-  bptree::BlockManager manager(option);
-  manager.Insert("a", "valua");
-  manager.Insert("b", "valub");
-  bptree::Transaction tx(manager);
-  auto ret = tx.Get("a");
-  EXPECT_EQ(ret, "valua");
-  tx.Update("a", "value");
-  tx.Delete("b");
-  tx.Commit();
-  EXPECT_EQ(manager.Get("a"), "value");
-  EXPECT_EQ(manager.Get("b"), "");
-
-  bptree::Transaction tx2(manager);
-  tx2.Update("a", "vvvvv");
-  tx2.Insert("b", "valub");
-  EXPECT_EQ(manager.Get("a"), "vvvvv");
-  EXPECT_EQ(manager.Get("b"), "valub");
-  ret = tx2.Get("c");
-  EXPECT_EQ(ret, "");
-  tx2.RollBack();
-  EXPECT_EQ(manager.Get("a"), "value");
-  EXPECT_EQ(manager.Get("b"), "");
-
-  std::thread th([&]() { manager.Run(); });
-  bptree::TransactionMt tx3(manager);
-  ret = tx3.Get("a");
-  EXPECT_EQ(ret, "value");
-  bool succ = tx3.Insert("b", "value");
-  EXPECT_EQ(succ, true);
-  EXPECT_EQ(tx3.Get("b"), "value");
-  tx3.Update("b", "bbbbb");
-  tx3.RollBack();
-  EXPECT_EQ(manager.Get("a"), "value");
-  EXPECT_EQ(manager.Get("b"), "");
-  manager.Stop();
-  th.join();
 }
