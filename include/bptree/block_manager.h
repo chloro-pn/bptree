@@ -26,9 +26,6 @@
 
 namespace bptree {
 
-constexpr uint32_t bit_map_size = 1024;
-constexpr size_t operation_queue_size = 4096;
-
 enum class GetRangeOption {
   SKIP,
   SELECT,
@@ -40,6 +37,17 @@ enum class Mode {
   W,
   WR,
 };
+
+inline const char* ModeStr(Mode mode) {
+  if (mode == Mode::R) {
+    return "R";
+  } else if (mode == Mode::W) {
+    return "W";
+  } else if (mode == Mode::WR) {
+    return "WR";
+  }
+  return nullptr;
+}
 
 enum class NotExistFlag {
   CREATE,
@@ -53,26 +61,32 @@ enum class ExistFlag {
 
 struct BlockManagerOption {
   // 指定db的名字
-  std::string db_name;
+  std::string db_name = "";
 
   // 指定权限，只读、只写或者读写，不满足权限的操作会导致抛出BptreeException异常
-  Mode mode;
+  Mode mode = Mode::R;
 
   // 如果db不存在，根据neflag决定是创建一个新的db或者抛出异常
-  NotExistFlag neflag;
+  NotExistFlag neflag = NotExistFlag::ERROR;
   // 如果db存在，根据eflag决定是成功返回或者抛出异常
-  ExistFlag eflag;
+  ExistFlag eflag = ExistFlag::SUCC;
 
   // 以下两个参数指定了key和value的大小，note: 本库只支持固定大小的kv存储
   // 如果key和value的大小之和过大，导致单个block中无法存储1个kv对，则会抛出异常
-  uint32_t key_size;
-  uint32_t value_size;
+  uint32_t key_size = 0;
+  uint32_t value_size = 0;
+
+  // 指定lru使用的block数量
+  size_t cache_size = 1024;
+
+  // 指定多少个写操作之后生成一个check point
+  size_t create_check_point_per_ops = 4096;
+
+  // 指定是否每个写操作之后同步wal日志
+  bool sync_per_write = false;
 
   // 可选的自定义cmp，db中会按照该cmp指定的顺序对key-value按序存储
   std::shared_ptr<Comparator> cmp = std::make_shared<Comparator>();
-
-  // 指定是否定期生成checkpoint并清理wal日志，目前仅测试用
-  bool no_reset_wal = false;
 };
 
 inline std::string CreateWalNameByDB(const std::string& db_name) { return db_name + "/" + db_name + "_wal.log"; }
@@ -110,12 +124,13 @@ class BlockManager {
   BPTREE_INTERFACE explicit BlockManager(BlockManagerOption option)
       : mode_(option.mode),
         comparator_(option.cmp),
-        block_cache_(1024),
+        block_cache_(option.cache_size),
         db_name_(option.db_name),
         super_block_(*this, option.key_size, option.value_size),
         wal_(CreateWalNameByDB(db_name_)),
         dw_(CreateDWfileNameByDB(db_name_)),
-        no_reset_wal_(option.no_reset_wal) {
+        create_checkpoint_per_op_(option.create_check_point_per_ops),
+        sync_per_write_(option.sync_per_write) {
     block_cache_.SetFreeNotify([this](const uint32_t& key, Block& value) -> void { this->OnCacheDelete(key, value); });
     wal_.RegisterLogHandler(
         [this](uint64_t seq, MsgType type, const std::string log) -> void { this->HandleWal(seq, type, log); });
@@ -346,6 +361,16 @@ class BlockManager {
     return ret.old_v_;
   }
 
+  BPTREE_INTERFACE void PrintOption() {
+    BPTREE_LOG_INFO("db name                  : {}", db_name_);
+    BPTREE_LOG_INFO("mode                     : {}", ModeStr(mode_));
+    BPTREE_LOG_INFO("cache size               : {}", block_cache_.GetCapacity());
+    BPTREE_LOG_INFO("key size                 : {}", super_block_.key_size_);
+    BPTREE_LOG_INFO("value size               : {}", super_block_.value_size_);
+    BPTREE_LOG_INFO("create checkpoint per op : {}", create_checkpoint_per_op_);
+    BPTREE_LOG_INFO("sync per write           : {}", sync_per_write_ ? "true" : "false");
+  }
+
   BPTREE_INTERFACE void PrintRootBlock() {
     auto root_block = GetBlock(super_block_.root_index_);
     root_block.Get().Print();
@@ -410,8 +435,11 @@ class BlockManager {
     auto new_block_1 = GetBlock(new_block_1_index);
     auto new_block_2 = GetBlock(new_block_2_index);
     // 在插入之前记录旧的数据快照, 作为undo log
-    std::string block_1_undo = CreateBlockViewWalLog(new_block_1_index, new_block_1.Get().CreateDataView());
-    std::string block_2_undo = CreateBlockViewWalLog(new_block_2_index, new_block_2.Get().CreateDataView());
+    std::string block_1_undo, block_2_undo;
+    if (sequence != no_wal_sequence) {
+      block_1_undo = CreateBlockViewWalLog(new_block_1_index, new_block_1.Get().CreateDataView());
+      block_2_undo = CreateBlockViewWalLog(new_block_2_index, new_block_2.Get().CreateDataView());
+    }
     size_t half_count = block->GetKVView().size() / 2;
     for (size_t i = 0; i < half_count; ++i) {
       bool succ = new_block_1.Get().AppendKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view,
@@ -428,12 +456,14 @@ class BlockManager {
       }
     }
     // 插入之后记录新的数据快照，作为redo log
-    std::string block_1_redo = CreateBlockViewWalLog(new_block_1_index, new_block_1.Get().CreateDataView());
-    std::string block_2_redo = CreateBlockViewWalLog(new_block_2_index, new_block_2.Get().CreateDataView());
-    auto log_num_1 = wal_.WriteLog(sequence, block_1_redo, block_1_undo);
-    auto log_num_2 = wal_.WriteLog(sequence, block_2_redo, block_2_undo);
-    new_block_1.Get().UpdateLogNumber(log_num_1);
-    new_block_2.Get().UpdateLogNumber(log_num_2);
+    if (sequence != no_wal_sequence) {
+      std::string block_1_redo = CreateBlockViewWalLog(new_block_1_index, new_block_1.Get().CreateDataView());
+      std::string block_2_redo = CreateBlockViewWalLog(new_block_2_index, new_block_2.Get().CreateDataView());
+      auto log_num_1 = wal_.WriteLog(sequence, block_1_redo, block_1_undo);
+      auto log_num_2 = wal_.WriteLog(sequence, block_2_redo, block_2_undo);
+      new_block_1.Get().UpdateLogNumber(log_num_1);
+      new_block_2.Get().UpdateLogNumber(log_num_2);
+    }
     BPTREE_LOG_DEBUG("block split, from {} to {} and {}", block->GetIndex(), new_block_1_index, new_block_2_index);
     return {new_block_1_index, new_block_2_index};
   }
@@ -468,7 +498,10 @@ class BlockManager {
     GetMetricSet().GetAs<Counter>("block_merge_count")->Add();
     uint32_t new_block_index = AllocNewBlock(b1->GetHeight(), sequence);
     auto new_block = GetBlock(new_block_index);
-    std::string block_undo = CreateBlockViewWalLog(new_block_index, new_block.Get().CreateDataView());
+    std::string block_undo;
+    if (sequence != no_wal_sequence) {
+      block_undo = CreateBlockViewWalLog(new_block_index, new_block.Get().CreateDataView());
+    }
     for (size_t i = 0; i < b1->GetKVView().size(); ++i) {
       bool succ =
           new_block.Get().AppendKv(b1->GetViewByIndex(i).key_view, b1->GetViewByIndex(i).value_view, no_wal_sequence);
@@ -483,9 +516,11 @@ class BlockManager {
         throw BptreeExecption("block broken");
       }
     }
-    std::string block_redo = CreateBlockViewWalLog(new_block_index, new_block.Get().CreateDataView());
-    auto log_num = wal_.WriteLog(sequence, block_redo, block_undo);
-    new_block.Get().UpdateLogNumber(log_num);
+    if (sequence != no_wal_sequence) {
+      std::string block_redo = CreateBlockViewWalLog(new_block_index, new_block.Get().CreateDataView());
+      auto log_num = wal_.WriteLog(sequence, block_redo, block_undo);
+      new_block.Get().UpdateLogNumber(log_num);
+    }
     BPTREE_LOG_DEBUG("block merge, from {} and {} to {}", b1->GetIndex(), b2->GetIndex(), new_block_index);
     return new_block_index;
   }
@@ -551,8 +586,7 @@ class BlockManager {
       new_block->UpdateLogNumber(log_number);
     }
     block.UnBind();
-    // result这个block读出来只是为了获取下一个free block的index，不会有change操作，因此从cache中删除时不用刷盘
-    bool succ = block_cache_.Delete(result, false);
+    bool succ = block_cache_.Delete(result, true);
     assert(succ == true);
     block_cache_.Insert(result, std::move(new_block));
     return result;
@@ -607,12 +641,11 @@ class BlockManager {
       std::exit(-1);
     }
     // 正常关闭的情况下执行到这里，所有block都刷到了磁盘，所以可以安全的删除wal日志
-    if (no_reset_wal_ == false) {
-      wal_.ResetLogFile();
-    }
+    wal_.ResetLogFile();
   }
 
   void OnCacheDelete(const uint32_t& index, Block& block) {
+    GetMetricSet().GetAs<Counter>("flush_block_count")->Add();
     bool dirty = block.Flush();
     if (dirty == true) {
       BPTREE_LOG_DEBUG("block {} flush to disk, dirty", index);
@@ -786,18 +819,20 @@ class BlockManager {
     wrapper.Get().HandleViewWal(view);
   }
 
-  // 每隔2048个操作生成新的check point
   void AfterCommitTx() {
+    if (sync_per_write_ == true) {
+      wal_.Flush();
+    }
     static uint64_t tx_count = 0;
     tx_count += 1;
-    if (tx_count % 2048 == 0 && no_reset_wal_ == false) {
+    if (tx_count % create_checkpoint_per_op_ == 0) {
       CreateCheckPoint();
     }
   }
 
   // 为当前存储内容创建一个快照
   void CreateCheckPoint() {
-    BPTREE_LOG_INFO("create chcek point succ");
+    BPTREE_LOG_INFO("begin to create chcek point");
     GetMetricSet().GetAs<Counter>("create_checkpoint_count")->Add();
     // 所有wal日志刷盘
     wal_.Flush();
@@ -812,10 +847,8 @@ class BlockManager {
     // 所有数据刷盘
     f_.Flush();
     // 重置wal文件
-    if (no_reset_wal_ == false) {
-      wal_.ResetLogFile();
-    }
-    metric_set_.GetAs<Gauge>("dirty_block_count")->PrintToLog();
+    wal_.ResetLogFile();
+    BPTREE_LOG_DEBUG("create check point succ");
   }
 
   void RegisterMetrics() {
@@ -827,6 +860,8 @@ class BlockManager {
     metric_set_.CreateMetric<Counter>("delete_count");
     // 从文件中读取block的数量
     metric_set_.CreateMetric<Counter>("load_block_count");
+    //
+    metric_set_.CreateMetric<Counter>("flush_block_count");
     // 生成check_point的数量
     metric_set_.CreateMetric<Counter>("create_checkpoint_count");
     metric_set_.CreateMetric<Counter>("block_split_count");
@@ -834,7 +869,6 @@ class BlockManager {
     metric_set_.CreateMetric<Counter>("block_merge_count");
     metric_set_.CreateMetric<Counter>("alloc_block_count");
     metric_set_.CreateMetric<Counter>("dealloc_block_count");
-
     metric_set_.CreateMetric<Gauge>("dirty_block_count");
   }
 
@@ -850,7 +884,7 @@ class BlockManager {
   FaultInjection fj_;
   // 记录运行过程中各项指标信息
   MetricSet metric_set_;
-  // 关闭清空wal日志操作
-  bool no_reset_wal_;
+  size_t create_checkpoint_per_op_;
+  bool sync_per_write_;
 };
 }  // namespace bptree

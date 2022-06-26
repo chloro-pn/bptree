@@ -38,3 +38,9 @@ git_repository(
         "mv support/bazel/WORKSPACE.bazel WORKSPACE.bazel",
     ],
 )
+
+git_repository(
+    name = "com_github_gflags_gflags",
+    remote = "https://ghproxy.com/https://github.com/gflags/gflags",
+    tag = "v2.2.2",
+)

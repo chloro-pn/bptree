@@ -21,7 +21,7 @@
 
 namespace bptree {
 
-constexpr uint32_t block_size = 4 * 1024;
+constexpr uint32_t block_size = 4 * 1024 * 4;
 
 constexpr uint32_t super_height = std::numeric_limits<uint32_t>::max();
 

@@ -83,11 +83,17 @@ class WriteAheadLog {
     assert(last_write_number_ >= log_number);
     if (current_flush_number_ < log_number) {
       f_.Flush();
+
       current_flush_number_ = last_write_number_;
     }
   }
 
-  void Flush() { f_.Flush(); }
+  void Flush() {
+    if (current_flush_number_ < last_write_number_) {
+      current_flush_number_ = last_write_number_;
+      f_.Flush();
+    }
+  }
 
   void Recover() {
     BPTREE_LOG_INFO("begin to recover");

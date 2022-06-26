@@ -24,7 +24,9 @@ class DoubleWrite {
     }
   }
 
-  void WriteBlock(const BlockBase& block) { f_.Write(block.GetBuf(), block_size, 0); }
+  void WriteBlock(const BlockBase& block) {
+    f_.Write(block.GetBuf(), block_size, 0); 
+    }
 
   void ReadBlock(char* buf) { f_.Read(buf, block_size, 0); }
 

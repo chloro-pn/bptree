@@ -18,13 +18,20 @@ cc_library(
 cc_binary(
   name = "example",
   srcs = ["example/example.cc"],
-  deps = [":bptree"],
+  deps = [
+    ":bptree",
+    "@com_github_gflags_gflags//:gflags",
+    ]
 )
 
 cc_binary(
-  name = "paritalwrite",
-  srcs = ["example/partial_write.cc"],
-  deps = ["bptree"],
+  name = "leveldb_benchmark",
+  srcs = ["example/leveldb_benchmark.cc"],
+  deps = [
+    "//third_party:leveldb",
+    "@spdlog//:spdlog",
+    "@com_github_gflags_gflags//:gflags",
+  ]
 )
 
 cc_binary(

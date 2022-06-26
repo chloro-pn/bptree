@@ -3,7 +3,31 @@
 #include <string>
 
 #include "bptree/block_manager.h"
+#include "gflags/gflags.h"
 #include "spdlog/spdlog.h"
+
+DEFINE_uint64(key_size, 10, "key size");
+DEFINE_uint64(value_size, 100, "value size");
+DEFINE_uint64(kv_count, 100000, "kv count");
+DEFINE_uint64(cache_size, 1024, "cache size");
+DEFINE_bool(sync_per_write, false, "sync per write");
+
+#include <chrono>
+
+class Timer {
+ public:
+  Timer() {}
+  void Start() { start_ = std::chrono::system_clock::now(); }
+
+  double End() {
+    auto end = std::chrono::system_clock::now();
+    auto use_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_);
+    return use_ms.count();
+  }
+
+ private:
+  std::chrono::time_point<std::chrono::system_clock> start_;
+};
 
 std::string ConstructRandomStr(size_t size) {
   std::string result;
@@ -31,44 +55,56 @@ std::vector<Entry> ConstructRandomKv(size_t size, size_t key_size, size_t value_
   return result;
 }
 
-int main() {
-  BPTREE_LOG_INFO("create example_db : test and insert 4w kvs");
+int main(int argc, char* argv[]) {
+  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  Timer tm;
+
   bptree::BlockManagerOption option;
   option.db_name = "example_db";
   option.neflag = bptree::NotExistFlag::CREATE;
   option.eflag = bptree::ExistFlag::ERROR;
   option.mode = bptree::Mode::WR;
-  option.key_size = 10;
-  option.value_size = 20;
+  option.key_size = FLAGS_key_size;
+  option.value_size = FLAGS_value_size;
+  option.create_check_point_per_ops = 10000000;
+  option.cache_size = FLAGS_cache_size;
+  option.sync_per_write = FLAGS_sync_per_write;
+
   bptree::BlockManager manager(option);
-  auto kvs = ConstructRandomKv(40000, 10, 20);
+  manager.PrintOption();
+
+  auto kvs = ConstructRandomKv(FLAGS_kv_count, FLAGS_key_size, FLAGS_value_size);
+
+  BPTREE_LOG_INFO("begin to randomly insert {} kvs", FLAGS_kv_count);
+  tm.Start();
   for (auto& each : kvs) {
     manager.Insert(each.key, each.value);
   }
-  BPTREE_LOG_INFO("insert complete");
-  for (size_t i = 0; i < 40000; ++i) {
+  auto ms = tm.End();
+  BPTREE_LOG_INFO("randomly insert {} kvs use {} ms", FLAGS_kv_count, ms);
+  tm.Start();
+  for (size_t i = 0; i < FLAGS_kv_count; ++i) {
     auto v = manager.Get(kvs[i].key);
     if (v != kvs[i].value) {
       BPTREE_LOG_ERROR("insert-get check fail");
       return -1;
     }
   }
+  ms = tm.End();
+  BPTREE_LOG_INFO("randomly get {} kvs use {} ms", FLAGS_kv_count, ms);
   BPTREE_LOG_INFO("insert-get check succ");
-
-  BPTREE_LOG_INFO("print root block's info : ");
-  manager.PrintRootBlock();
-
-  BPTREE_LOG_INFO("print cache's info : ");
-  manager.PrintCacheInfo();
 
   std::sort(kvs.begin(), kvs.end(), [](const Entry& n1, const Entry& n2) -> bool { return n1.key < n2.key; });
 
-  BPTREE_LOG_INFO("randomly delete 10000 kvs");
+  BPTREE_LOG_INFO("begin to randomly delete 10000 kvs");
+  tm.Start();
   for (int i = 0; i < 10000; ++i) {
     int delete_index = rand() % kvs.size();
     manager.Delete(kvs[delete_index].key);
     kvs[delete_index].delete_ = true;
   }
+  ms = tm.End();
+  BPTREE_LOG_INFO("randomly delete {} kvs use {} ms", 10000, ms);
 
   std::vector<Entry> kvs_after_delete;
   for (auto& each : kvs) {
