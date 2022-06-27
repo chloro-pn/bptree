@@ -152,6 +152,16 @@ class LRUCache {
     return true;
   }
 
+  std::unique_ptr<Value> Move(const Key& key) {
+    assert(cache_.count(key) > 0);
+    assert(cache_[key].use_ref_ == 0);
+    Entry& entry = cache_[key];
+    lru_list_.erase(entry.iter);
+    auto result = std::move(entry.value);
+    cache_.erase(key);
+    return result;
+  }
+
   void ForeachValueInCache(const std::function<void(const Key& key, Value&)>& handler) {
     if (in_use_.empty() == false) {
       throw BptreeExecption("lrucache's ForeachValueInCache is called when in_use_.empty() == false");

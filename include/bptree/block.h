@@ -208,6 +208,8 @@ class BlockBase {
 
   void SetDirty(bool update_dirty_block_count = true);
 
+  void SetClean() { dirty_ = false; }
+
   virtual ~BlockBase() {
     if (dirty_ == true) {
       std::cerr << "warn : block " << index_ << " destruct in dirty state, maybe throw exception or some inner error!"

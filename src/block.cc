@@ -62,7 +62,6 @@ Block::Block(BlockManager& manager, uint32_t index, uint32_t height, uint32_t ke
     throw BptreeExecption("key and value occupy too much space");
   }
   InitEmptyEntrys(no_wal_sequence);
-  manager_.GetMetricSet().GetAs<Gauge>("dirty_block_count")->Add();
 }
 
 void Block::SetNextFreeIndex(uint32_t nfi, uint64_t sequence) noexcept {

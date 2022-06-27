@@ -96,6 +96,17 @@ int main(int argc, char* argv[]) {
 
   std::sort(kvs.begin(), kvs.end(), [](const Entry& n1, const Entry& n2) -> bool { return n1.key < n2.key; });
 
+  tm.Start();
+  for(size_t i = 0; i < FLAGS_kv_count; ++i) {
+    auto v= manager.Get(kvs[i].key);
+    if (v != kvs[i].value) {
+      BPTREE_LOG_ERROR("insert-get check fail");
+      return -1;      
+    }
+  }
+  ms = tm.End();
+  BPTREE_LOG_INFO("seq get {} kvs use {} ms", FLAGS_kv_count, ms);
+
   BPTREE_LOG_INFO("begin to randomly delete 10000 kvs");
   tm.Start();
   for (int i = 0; i < 10000; ++i) {
@@ -133,6 +144,8 @@ int main(int argc, char* argv[]) {
   }
 
   BPTREE_LOG_INFO("all check succ");
+  manager.PrintSuperBlockInfo();
+  manager.PrintBlockByIndex(1);
   manager.PrintMetricSet();
   return 0;
 }

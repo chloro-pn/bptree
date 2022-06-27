@@ -22,6 +22,7 @@
 #include "bptree/metric/metric.h"
 #include "bptree/metric/metric_set.h"
 #include "bptree/util.h"
+#include "bptree/unused_block.h"
 #include "bptree/wal.h"
 
 namespace bptree {
@@ -104,6 +105,7 @@ enum class LogType : uint8_t {
   BLOCK_META,
   BLOCK_DATA,
   BLOCK_ALLO,
+  BLOCK_RESET,
   BLOCK_VIEW,
 };
 
@@ -130,7 +132,8 @@ class BlockManager {
         wal_(CreateWalNameByDB(db_name_)),
         dw_(CreateDWfileNameByDB(db_name_)),
         create_checkpoint_per_op_(option.create_check_point_per_ops),
-        sync_per_write_(option.sync_per_write) {
+        sync_per_write_(option.sync_per_write),
+        unused_blocks_() {
     block_cache_.SetFreeNotify([this](const uint32_t& key, Block& value) -> void { this->OnCacheDelete(key, value); });
     wal_.RegisterLogHandler(
         [this](uint64_t seq, MsgType type, const std::string log) -> void { this->HandleWal(seq, type, log); });
@@ -155,6 +158,7 @@ class BlockManager {
       dw_.OpenFile();
       auto root_block = std::unique_ptr<Block>(
           new Block(*this, super_block_.root_index_, 1, super_block_.key_size_, super_block_.value_size_));
+      GetMetricSet().GetAs<Gauge>("dirty_block_count")->Add();
       block_cache_.Insert(super_block_.root_index_, std::move(root_block));
 
       FlushSuperBlockToFile();
@@ -273,13 +277,12 @@ class BlockManager {
     if (key.size() != super_block_.key_size_ || value.size() != super_block_.value_size_) {
       throw BptreeExecption("wrong kv length");
     }
-
+    GetMetricSet().GetAs<Counter>("insert_count")->Add();
     uint64_t sequence = seq;
     if (sequence == no_wal_sequence) {
       sequence = wal_.RequestSeq();
       wal_.Begin(sequence);
     }
-    GetMetricSet().GetAs<Counter>("insert_count")->Add();
     InsertInfo info = GetBlock(super_block_.root_index_).Get().Insert(key, value, sequence);
     bool result = true;
     if (info.state_ == InsertInfo::State::Invalid) {
@@ -437,8 +440,8 @@ class BlockManager {
     // 在插入之前记录旧的数据快照, 作为undo log
     std::string block_1_undo, block_2_undo;
     if (sequence != no_wal_sequence) {
-      block_1_undo = CreateBlockViewWalLog(new_block_1_index, new_block_1.Get().CreateDataView());
-      block_2_undo = CreateBlockViewWalLog(new_block_2_index, new_block_2.Get().CreateDataView());
+      block_1_undo = CreateResetBlockWalLog(new_block_1_index, new_block_1.Get().GetIndex(), super_block_.key_size_, super_block_.value_size_);
+      block_2_undo = CreateResetBlockWalLog(new_block_2_index, new_block_2.Get().GetIndex(), super_block_.key_size_, super_block_.value_size_);
     }
     size_t half_count = block->GetKVView().size() / 2;
     for (size_t i = 0; i < half_count; ++i) {
@@ -535,6 +538,16 @@ class BlockManager {
     return result;
   }
 
+  std::string CreateResetBlockWalLog(uint32_t index, uint32_t height, uint32_t key_size, uint32_t value_size) {
+    std::string result;
+    util::StringAppender(result, detail::LogTypeToUint8T(detail::LogType::BLOCK_RESET));
+    util::StringAppender(result, index);
+    util::StringAppender(result, height);
+    util::StringAppender(result, key_size);
+    util::StringAppender(result, value_size);
+    return result;
+  }
+
   std::string CreateBlockViewWalLog(uint32_t index, const std::string& view) {
     std::string result;
     util::StringAppender(result, detail::LogTypeToUint8T(detail::LogType::BLOCK_VIEW));
@@ -560,6 +573,7 @@ class BlockManager {
         new_block->UpdateLogNumber(log_number);
       }
       BPTREE_LOG_DEBUG("alloc new block {}", result);
+      GetMetricSet().GetAs<Gauge>("dirty_block_count")->Add();
       block_cache_.Insert(result, std::move(new_block));
       return result;
     } else {
@@ -570,25 +584,31 @@ class BlockManager {
   uint32_t ReuseFreeBlock(uint32_t height, uint64_t sequence) {
     assert(super_block_.free_block_head_ != 0);
     BPTREE_LOG_DEBUG("get free block head {}", super_block_.free_block_head_);
-    auto block = GetBlock(super_block_.free_block_head_);
-    super_block_.SetFreeBlockHead(block.Get().GetNextFreeIndex(), sequence);
-    uint32_t result = block.Get().GetIndex();
+    auto block = unused_blocks_.Get(super_block_.free_block_head_);
+    if (block == nullptr) {
+      block = LoadBlock(super_block_.free_block_head_);
+    }
+    super_block_.SetFreeBlockHead(block->GetNextFreeIndex(), sequence);
+    uint32_t result = block->GetIndex();
     BPTREE_LOG_DEBUG("reuse block index {}", result);
     assert(super_block_.free_block_size_ > 0);
     super_block_.SetFreeBlockSize(super_block_.free_block_size_ - 1, sequence);
 
-    auto new_block =
-        std::unique_ptr<Block>(new Block(*this, result, height, super_block_.key_size_, super_block_.value_size_));
+    std::string redo_log, undo_log;
     if (sequence != no_wal_sequence) {
-      std::string redo_log = CreateBlockViewWalLog(result, new_block->CreateDataView());
-      std::string undo_log = CreateBlockViewWalLog(result, block.Get().CreateDataView());
-      auto log_number = wal_.WriteLog(sequence, redo_log, undo_log);
-      new_block->UpdateLogNumber(log_number);
+      redo_log = CreateResetBlockWalLog(result, height, super_block_.key_size_, super_block_.value_size_);
+      undo_log = CreateBlockViewWalLog(result, block->CreateDataView());
     }
-    block.UnBind();
-    bool succ = block_cache_.Delete(result, true);
-    assert(succ == true);
-    block_cache_.Insert(result, std::move(new_block));
+
+    block->SetClean();
+    block.reset(new Block(*this, result, height, super_block_.key_size_, super_block_.value_size_));
+
+    if (sequence != no_wal_sequence) {
+      auto log_number = wal_.WriteLog(sequence, redo_log, undo_log);
+      block->UpdateLogNumber(log_number);
+    }
+    GetMetricSet().GetAs<Gauge>("dirty_block_count")->Add();
+    block_cache_.Insert(result, std::move(block));
     return result;
   }
 
@@ -612,8 +632,9 @@ class BlockManager {
     block.UnBind();
     super_block_.SetFreeBlockHead(index, sequence);
     super_block_.SetFreeBlockSize(super_block_.free_block_size_ + 1, sequence);
-    bool succ = block_cache_.Delete(index, true);
-    assert(succ == true);
+    auto unused_block = block_cache_.Move(index);
+    GetMetricSet().GetAs<Gauge>("dirty_block_count")->Sub();
+    unused_blocks_.Push(std::move(unused_block));
     BPTREE_LOG_DEBUG("dealloc block {}", index);
   }
 
@@ -633,6 +654,7 @@ class BlockManager {
     FlushSuperBlockToFile();
     bool succ = block_cache_.Clear();
     assert(succ == true);
+    FlushUnusedBlockToFile();
     f_.Close();
     dw_.Close();
     auto& cond = GetFaultInjection().GetTheLastCheckPointFailCondition();
@@ -641,7 +663,7 @@ class BlockManager {
       std::exit(-1);
     }
     // 正常关闭的情况下执行到这里，所有block都刷到了磁盘，所以可以安全的删除wal日志
-    wal_.ResetLogFile();
+    //wal_.ResetLogFile();
   }
 
   void OnCacheDelete(const uint32_t& index, Block& block) {
@@ -685,6 +707,13 @@ class BlockManager {
     wal_.EnsureLogFlush(super_block_.GetLogNumber());
     dw_.WriteBlock(super_block_);
     FlushBlockToFile(super_block_);
+  }
+
+  void FlushUnusedBlockToFile() {
+    auto blocks = unused_blocks_.GetAll();
+    for(auto& each : blocks) {
+      OnCacheDelete(each->GetIndex(), *each);
+    }
   }
 
   void ParseSuperBlockFromFile() {
@@ -782,6 +811,16 @@ class BlockManager {
         HandleBlockAllocWal(sequence, index, height, key_size, value_size);
         break;
       }
+      case detail::LogTypeToUint8T(detail::LogType::BLOCK_RESET): {
+        BPTREE_LOG_DEBUG("handle block_reset log");
+        uint32_t index = util::StringParser<uint32_t>(log, offset);
+        uint32_t height = util::StringParser<uint32_t>(log, offset);
+        uint32_t key_size = util::StringParser<uint32_t>(log, offset);
+        uint32_t value_size = util::StringParser<uint32_t>(log, offset);
+        assert(offset == log.size());
+        HandleBlockResetWal(sequence, index, height, key_size, value_size);
+        break;
+      }
       case detail::LogTypeToUint8T(detail::LogType::BLOCK_VIEW): {
         BPTREE_LOG_DEBUG("handle block view log");
         uint32_t index = util::StringParser<uint32_t>(log, offset);
@@ -799,8 +838,21 @@ class BlockManager {
   void HandleBlockAllocWal(uint64_t sequence, uint32_t index, uint32_t height, uint32_t key_size, uint32_t value_size) {
     assert(key_size == super_block_.key_size_ && value_size == super_block_.value_size_);
     auto block = std::unique_ptr<Block>(new Block(*this, index, height, key_size, value_size));
-    // 恢复阶段在alloc一个block的时候，之前被删除的block可能仍然在内存中（因为dealloc只是改变了一个元数据），因此这里首先删除。
-    block_cache_.Delete(index, true);
+    // index block之前就不存在，因此不可能在cache中，直接插入
+    assert(block_cache_.Get(index).Exist() == false);
+    block_cache_.Insert(index, std::move(block));
+  }
+
+  void HandleBlockResetWal(uint64_t sequence, uint32_t index, uint32_t height, uint32_t key_size, uint32_t value_size) {
+    assert(key_size == super_block_.key_size_ && value_size == super_block_.value_size_);
+    auto block = std::unique_ptr<Block>(new Block(*this, index, height, key_size, value_size));
+    // 直接将之前的版本删除，新建一个新的block代替即可。
+    auto tmp = block_cache_.Get(index);
+    if (tmp.Exist() == true) {
+      tmp.Get().SetClean();
+    }
+    tmp.UnBind();
+    block_cache_.Delete(index, false);
     block_cache_.Insert(index, std::move(block));
   }
 
@@ -839,6 +891,13 @@ class BlockManager {
     FlushSuperBlockToFile();
     block_cache_.ForeachValueInCache([this](const uint32_t& key, Block& block) {
       bool dirty = block.Flush();
+      if (dirty == true) {
+        this->dw_.WriteBlock(block);
+        this->FlushBlockToFile(block);
+      }
+    });
+    unused_blocks_.ForeachUnusedBlocks([this](uint32_t key, Block& block) {
+      bool dirty = block.Flush(false);
       if (dirty == true) {
         this->dw_.WriteBlock(block);
         this->FlushBlockToFile(block);
@@ -886,5 +945,6 @@ class BlockManager {
   MetricSet metric_set_;
   size_t create_checkpoint_per_op_;
   bool sync_per_write_;
+  UnusedBlocks unused_blocks_;
 };
 }  // namespace bptree

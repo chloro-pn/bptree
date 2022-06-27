@@ -92,6 +92,19 @@ int main(int argc, char* argv[]) {
 
   std::sort(kvs.begin(), kvs.end(), [](const Entry& n1, const Entry& n2) -> bool { return n1.key < n2.key; });
 
+  tm.Start();
+  for(size_t i = 0; i < FLAGS_kv_count; ++i) {
+    std::string value;
+    auto s = db->Get(leveldb::ReadOptions(), kvs[i].key, &value);
+    assert(s.ok());
+    if (value != kvs[i].value) {
+      spdlog::error("insert-get check fail");
+      return -1;      
+    }
+  }
+  ms = tm.End();
+  spdlog::info("seq get {} kvs use {} ms", FLAGS_kv_count, ms);
+
   spdlog::info("begin to randomly delete 10000 kvs");
   tm.Start();
   for (int i = 0; i < 10000; ++i) {
