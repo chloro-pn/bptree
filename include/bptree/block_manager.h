@@ -21,8 +21,8 @@
 #include "bptree/log.h"
 #include "bptree/metric/metric.h"
 #include "bptree/metric/metric_set.h"
-#include "bptree/util.h"
 #include "bptree/unused_block.h"
+#include "bptree/util.h"
 #include "bptree/wal.h"
 
 namespace bptree {
@@ -85,6 +85,9 @@ struct BlockManagerOption {
 
   // 指定是否每个写操作之后同步wal日志
   bool sync_per_write = false;
+
+  // 指定是否关闭double write写（计划通过wal日志记录block最近版本，避免double write写）
+  bool double_write_turn_off = false;
 
   // 可选的自定义cmp，db中会按照该cmp指定的顺序对key-value按序存储
   std::shared_ptr<Comparator> cmp = std::make_shared<Comparator>();
@@ -153,9 +156,12 @@ class BlockManager {
       super_block_.free_block_head_ = 0;
       super_block_.current_max_block_index_ = 1;
       util::CreateDir(db_name_);
-      f_ = FileHandler::CreateFile(CreateDbFileNameByDB(db_name_), FileType::DIRECT);
+      f_ = FileHandler::CreateFile(CreateDbFileNameByDB(db_name_), FileType::NORMAL);
       wal_.OpenFile();
       dw_.OpenFile();
+      if (option.double_write_turn_off == true) {
+        dw_.TurnOff();
+      }
       auto root_block = std::unique_ptr<Block>(
           new Block(*this, super_block_.root_index_, 1, super_block_.key_size_, super_block_.value_size_));
       GetMetricSet().GetAs<Gauge>("dirty_block_count")->Add();
@@ -175,9 +181,12 @@ class BlockManager {
       if (option.eflag == ExistFlag::ERROR) {
         throw BptreeExecption("db {} already exists", db_name_);
       }
-      f_ = FileHandler::OpenFile(CreateDbFileNameByDB(db_name_), FileType::DIRECT);
+      f_ = FileHandler::OpenFile(CreateDbFileNameByDB(db_name_), FileType::NORMAL);
       wal_.OpenFile();
       dw_.OpenFile();
+      if (option.double_write_turn_off == true) {
+        dw_.TurnOff();
+      }
       ParseSuperBlockFromFile();
       wal_.Recover();
       // 这个时候cache中的block buf都已经通过wal日志恢复，但是kvview还没有变更，因此需要对cache中的block更新kvview
@@ -440,8 +449,10 @@ class BlockManager {
     // 在插入之前记录旧的数据快照, 作为undo log
     std::string block_1_undo, block_2_undo;
     if (sequence != no_wal_sequence) {
-      block_1_undo = CreateResetBlockWalLog(new_block_1_index, new_block_1.Get().GetIndex(), super_block_.key_size_, super_block_.value_size_);
-      block_2_undo = CreateResetBlockWalLog(new_block_2_index, new_block_2.Get().GetIndex(), super_block_.key_size_, super_block_.value_size_);
+      block_1_undo = CreateResetBlockWalLog(new_block_1_index, new_block_1.Get().GetIndex(), super_block_.key_size_,
+                                            super_block_.value_size_);
+      block_2_undo = CreateResetBlockWalLog(new_block_2_index, new_block_2.Get().GetIndex(), super_block_.key_size_,
+                                            super_block_.value_size_);
     }
     size_t half_count = block->GetKVView().size() / 2;
     for (size_t i = 0; i < half_count; ++i) {
@@ -663,7 +674,7 @@ class BlockManager {
       std::exit(-1);
     }
     // 正常关闭的情况下执行到这里，所有block都刷到了磁盘，所以可以安全的删除wal日志
-    //wal_.ResetLogFile();
+    wal_.ResetLogFile();
   }
 
   void OnCacheDelete(const uint32_t& index, Block& block) {
@@ -711,7 +722,7 @@ class BlockManager {
 
   void FlushUnusedBlockToFile() {
     auto blocks = unused_blocks_.GetAll();
-    for(auto& each : blocks) {
+    for (auto& each : blocks) {
       OnCacheDelete(each->GetIndex(), *each);
     }
   }

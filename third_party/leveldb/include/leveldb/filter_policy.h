@@ -40,8 +40,7 @@ class LEVELDB_EXPORT FilterPolicy {
   //
   // Warning: do not change the initial contents of *dst.  Instead,
   // append the newly constructed filter to *dst.
-  virtual void CreateFilter(const Slice* keys, int n,
-                            std::string* dst) const = 0;
+  virtual void CreateFilter(const Slice* keys, int n, std::string* dst) const = 0;
 
   // "filter" contains the data appended by a preceding call to
   // CreateFilter() on this class.  This method must return true if

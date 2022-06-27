@@ -262,9 +262,7 @@ class FileHandlerImpl<OS::LINUX> {
     }
   }
 
-  void Flush() { 
-    fsync(fd_); 
-  }
+  void Flush() { fsync(fd_); }
 
   void Close() {
     if (fd_ != -1) {

@@ -116,5 +116,17 @@ TEST(block, constructor) {
   block.RemoveEntry(block.head_entry_, 0, bptree::no_wal_sequence);
   EXPECT_EQ(block.head_entry_, 0);
   EXPECT_EQ(block.free_list_, 1);
-  block.dirty_ = false;
+  block.SetClean();
+
+  bptree::Block block2(manager, 3, 0, 1, 5);
+  block2.Insert("a", "valua", bptree::no_wal_sequence);
+  EXPECT_EQ(block2.SearchKey("b"), 1);
+  EXPECT_EQ(block2.SearchKey("a"), 0);
+  block2.Insert("c", "valuc", bptree::no_wal_sequence);
+  block2.Insert("b", "valub", bptree::no_wal_sequence);
+  EXPECT_EQ(block2.SearchKey("b"), 1);
+  EXPECT_EQ(block2.SearchTheFirstGEKey("b"), 1);
+  block2.Insert("e", "value", bptree::no_wal_sequence);
+  EXPECT_EQ(block2.SearchTheFirstGEKey("d"), 3);
+  block2.SetClean();
 }

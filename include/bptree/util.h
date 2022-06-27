@@ -26,66 +26,6 @@ inline void DeleteFile(const std::string& filename) { std::filesystem::remove(st
 
 inline bool CreateDir(const std::string& dir) { return std::filesystem::create_directory(std::filesystem::path(dir)); }
 
-// 打开一个已经存在的文件，如果不存在则抛出异常
-inline FILE* OpenFile(const std::string& file_name) {
-  FILE* f = fopen(file_name.c_str(), "rb+");
-  if (f == nullptr) {
-    throw BptreeExecption("open file {} error : {}", file_name, strerror(errno));
-  }
-  return f;
-}
-
-inline FILE* CreateFile(const std::string& file_name) {
-  FILE* f = fopen(file_name.c_str(), "wb+");
-  if (f == nullptr) {
-    throw BptreeExecption("create file {} error : {}", file_name, strerror(errno));
-  }
-  return f;
-}
-
-inline void FileAppend(FILE* f, const char* str, size_t size) {
-  assert(f != nullptr);
-  int ret = fwrite(str, size, 1, f);
-  if (ret != 1) {
-    throw BptreeExecption("fwrite error : {}", strerror(errno));
-  }
-}
-
-inline void FileWriteAt(FILE* f, const char* str, size_t size, size_t offset) {
-  assert(f != nullptr);
-  int ret = fseek(f, offset, SEEK_SET);
-  if (ret != 0) {
-    throw BptreeExecption("fseek error : {}", strerror(errno));
-  }
-  ret = fwrite(str, size, 1, f);
-  if (ret != 1) {
-    throw BptreeExecption("fwrite error : {}", strerror(errno));
-  }
-}
-
-// 从当前位置读size字节的数据，如果有任何错误抛出异常
-inline void FileRead(FILE* f, void* buf, size_t size) {
-  assert(f != nullptr);
-  int ret = fread(buf, size, 1, f);
-  if (ret != 1) {
-    throw BptreeExecption("fread error : {}", strerror(errno));
-  }
-}
-
-inline void FileReadAt(FILE* f, void* buf, size_t size, size_t offset) {
-  assert(f != nullptr);
-  int ret = fseek(f, offset, SEEK_SET);
-  if (ret != 0) {
-    throw BptreeExecption("fseek error : {}", strerror(errno));
-  }
-  ret = fread(buf, size, 1, f);
-  if (ret != 1) {
-    throw BptreeExecption("fread error : {}", strerror(errno));
-  }
-}
-
-inline bool FEof(FILE* f) { return feof(f) != 0; }
-
 template <typename T>
 inline void StringAppender(std::string& str, const T& t) {
   str.append((const char*)&t, sizeof(t));

@@ -16,8 +16,18 @@ cc_library(
 
 # https://docs.bazel.build/versions/master/be/c-cpp.html#cc_binary
 cc_binary(
-  name = "example",
-  srcs = ["example/example.cc"],
+  name = "bptree_write",
+  srcs = ["example/bptree_write.cc", "example/helper.h"],
+  deps = [
+    ":bptree",
+    "@com_github_gflags_gflags//:gflags",
+    ]
+)
+
+# https://docs.bazel.build/versions/master/be/c-cpp.html#cc_binary
+cc_binary(
+  name = "bptree_read",
+  srcs = ["example/bptree_read.cc", "example/helper.h"],
   deps = [
     ":bptree",
     "@com_github_gflags_gflags//:gflags",
@@ -25,8 +35,18 @@ cc_binary(
 )
 
 cc_binary(
-  name = "leveldb_benchmark",
-  srcs = ["example/leveldb_benchmark.cc"],
+  name = "leveldb_write",
+  srcs = ["example/leveldb_write.cc", "example/helper.h"],
+  deps = [
+    "//third_party:leveldb",
+    "@spdlog//:spdlog",
+    "@com_github_gflags_gflags//:gflags",
+  ]
+)
+
+cc_binary(
+  name = "leveldb_read",
+  srcs = ["example/leveldb_read.cc", "example/helper.h"],
   deps = [
     "//third_party:leveldb",
     "@spdlog//:spdlog",

@@ -376,6 +376,24 @@ class Block : public BlockBase {
            sizeof(value_size_) + sizeof(head_entry_) + sizeof(free_list_);
   }
 
+  /**
+   * @brief 在kv_view_中查找key对应的元素下标
+   * @param key 用户指定的key
+   * @return
+   *      - kv_view_.size() 查找失败
+   *      - [0, kv_view_.size()) 查找结果在kv_view_中的下标
+   */
+  size_t SearchKey(const std::string_view& key) const;
+
+  /**
+   * @brief 在kv_view_中查找第一个key大于等于指定key的元素下标
+   * @param key 用户指定的key
+   * @return
+   *      - kv_view_.size() 查找失败
+   *      - [0, kv_view_.size()) 查找结果在kv_view_中的下标
+   */
+  size_t SearchTheFirstGEKey(const std::string_view& key) const;
+
   // 索引值从1开始计数
   // tested
   uint32_t GetOffsetByEntryIndex(uint32_t index) noexcept {

@@ -37,21 +37,13 @@ class LEVELDB_EXPORT Status {
   static Status OK() { return Status(); }
 
   // Return error status of an appropriate type.
-  static Status NotFound(const Slice& msg, const Slice& msg2 = Slice()) {
-    return Status(kNotFound, msg, msg2);
-  }
-  static Status Corruption(const Slice& msg, const Slice& msg2 = Slice()) {
-    return Status(kCorruption, msg, msg2);
-  }
-  static Status NotSupported(const Slice& msg, const Slice& msg2 = Slice()) {
-    return Status(kNotSupported, msg, msg2);
-  }
+  static Status NotFound(const Slice& msg, const Slice& msg2 = Slice()) { return Status(kNotFound, msg, msg2); }
+  static Status Corruption(const Slice& msg, const Slice& msg2 = Slice()) { return Status(kCorruption, msg, msg2); }
+  static Status NotSupported(const Slice& msg, const Slice& msg2 = Slice()) { return Status(kNotSupported, msg, msg2); }
   static Status InvalidArgument(const Slice& msg, const Slice& msg2 = Slice()) {
     return Status(kInvalidArgument, msg, msg2);
   }
-  static Status IOError(const Slice& msg, const Slice& msg2 = Slice()) {
-    return Status(kIOError, msg, msg2);
-  }
+  static Status IOError(const Slice& msg, const Slice& msg2 = Slice()) { return Status(kIOError, msg, msg2); }
 
   // Returns true iff the status indicates success.
   bool ok() const { return (state_ == nullptr); }
@@ -76,18 +68,9 @@ class LEVELDB_EXPORT Status {
   std::string ToString() const;
 
  private:
-  enum Code {
-    kOk = 0,
-    kNotFound = 1,
-    kCorruption = 2,
-    kNotSupported = 3,
-    kInvalidArgument = 4,
-    kIOError = 5
-  };
+  enum Code { kOk = 0, kNotFound = 1, kCorruption = 2, kNotSupported = 3, kInvalidArgument = 4, kIOError = 5 };
 
-  Code code() const {
-    return (state_ == nullptr) ? kOk : static_cast<Code>(state_[4]);
-  }
+  Code code() const { return (state_ == nullptr) ? kOk : static_cast<Code>(state_[4]); }
 
   Status(Code code, const Slice& msg, const Slice& msg2);
   static const char* CopyState(const char* s);
@@ -100,9 +83,7 @@ class LEVELDB_EXPORT Status {
   const char* state_;
 };
 
-inline Status::Status(const Status& rhs) {
-  state_ = (rhs.state_ == nullptr) ? nullptr : CopyState(rhs.state_);
-}
+inline Status::Status(const Status& rhs) { state_ = (rhs.state_ == nullptr) ? nullptr : CopyState(rhs.state_); }
 inline Status& Status::operator=(const Status& rhs) {
   // The following condition catches both aliasing (when this == &rhs),
   // and the common case where both rhs and *this are ok.

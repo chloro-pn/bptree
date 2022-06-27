@@ -14,7 +14,7 @@ namespace bptree {
 
 class DoubleWrite {
  public:
-  explicit DoubleWrite(const std::string& file_name) : file_name_(file_name), f_() {}
+  explicit DoubleWrite(const std::string& file_name) : file_name_(file_name), f_(), turn_off_(false) {}
 
   void OpenFile() {
     if (util::FileNotExist(file_name_)) {
@@ -24,11 +24,21 @@ class DoubleWrite {
     }
   }
 
-  void WriteBlock(const BlockBase& block) {
-    f_.Write(block.GetBuf(), block_size, 0); 
-    }
+  void TurnOff() { turn_off_ = true; }
 
-  void ReadBlock(char* buf) { f_.Read(buf, block_size, 0); }
+  void WriteBlock(const BlockBase& block) {
+    if (turn_off_ == true) {
+      return;
+    }
+    f_.Write(block.GetBuf(), block_size, 0);
+  }
+
+  void ReadBlock(char* buf) {
+    if (turn_off_ == true) {
+      throw BptreeExecption("double write trun off");
+    }
+    f_.Read(buf, block_size, 0);
+  }
 
   void Close() { f_.Close(); }
 
@@ -37,5 +47,6 @@ class DoubleWrite {
  private:
   std::string file_name_;
   FileHandler f_;
+  bool turn_off_;
 };
 }  // namespace bptree
