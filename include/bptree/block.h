@@ -628,9 +628,13 @@ class Block : public BlockBase {
 class SuperBlock : public BlockBase {
  public:
   friend class BlockManager;
+   /**
+   * @note 构造函数默认新建db，如果打开已经存在的db，会根据Parse函数覆盖构造函数设置的值
+   * @
+   */
   SuperBlock(BlockManager& manager, uint32_t key_size, uint32_t value_size) noexcept
       : BlockBase(manager, 0, super_height),
-        root_index_(0),
+        root_index_(1),
         key_size_(key_size),
         value_size_(value_size),
         free_block_head_(0),

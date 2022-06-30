@@ -20,6 +20,12 @@ set(BPTREE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 add_library(BPTREE STATIC ${BPTREE_SOURCES})
 target_include_directories(BPTREE PUBLIC ${BPTREE_INCLUDE_DIR})
 
+add_library(LEVELDB STATIC IMPORTED)
+set_target_properties(LEVELDB PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/third_party/leveldb/lib/libleveldb.a" 
+IMPORTED_LINK_INTERFACE_LIBRARIES pthread)
+target_include_directories(LEVELDB INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/leveldb/include")
+
+
 if (NOT TARGET spdlog)
   include(spdlog)
 endif()
@@ -32,6 +38,10 @@ endif()
 
 if (NOT TARGET fmt)
   include(fmt)
+endif()
+
+if (NOT TARGET gflags)
+include(gflags)
 endif()
 
 target_link_libraries(BPTREE PUBLIC spdlog::spdlog_header_only crc32 MPMCQueue fmt::fmt)
@@ -57,6 +67,6 @@ if (BPTREE_BUILD_EXAMPLE)
     string(REGEX MATCHALL "[0-9A-Za-z_]*.cc" tmp ${each})
     string(REGEX REPLACE ".cc" "_out" nn ${tmp})
     add_executable(${nn} ${each})
-    target_link_libraries(${nn} BPTREE spdlog::spdlog_header_only)
+    target_link_libraries(${nn} BPTREE spdlog::spdlog_header_only LEVELDB gflags)
   endforeach(each)
 endif()

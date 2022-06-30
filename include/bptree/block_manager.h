@@ -137,6 +137,9 @@ class BlockManager {
         create_checkpoint_per_op_(option.create_check_point_per_ops),
         sync_per_write_(option.sync_per_write),
         unused_blocks_() {
+    if (db_name_.empty() == true) {
+      throw BptreeExecption("please specify the db's name");
+    }
     block_cache_.SetFreeNotify([this](const uint32_t& key, Block& value) -> void { this->OnCacheDelete(key, value); });
     wal_.RegisterLogHandler(
         [this](uint64_t seq, MsgType type, const std::string log) -> void { this->HandleWal(seq, type, log); });
@@ -150,11 +153,6 @@ class BlockManager {
             "block manager construct error, key_size and value_size should not "
             "be 0");
       }
-      // 新建的b+树，初始化super block和其他信息即可
-      // 不需要将这些信息写入wal日志，因为如果db存在的话会解析super block，解析失败则抛出异常
-      super_block_.root_index_ = 1;
-      super_block_.free_block_head_ = 0;
-      super_block_.current_max_block_index_ = 1;
       util::CreateDir(db_name_);
       f_ = FileHandler::CreateFile(CreateDbFileNameByDB(db_name_), FileType::NORMAL);
       wal_.OpenFile();
@@ -162,12 +160,11 @@ class BlockManager {
       if (option.double_write_turn_off == true) {
         dw_.TurnOff();
       }
+      // 新建root block并写入wal文件
       auto root_block = std::unique_ptr<Block>(
           new Block(*this, super_block_.root_index_, 1, super_block_.key_size_, super_block_.value_size_));
       GetMetricSet().GetAs<Gauge>("dirty_block_count")->Add();
       block_cache_.Insert(super_block_.root_index_, std::move(root_block));
-
-      FlushSuperBlockToFile();
 
       uint64_t seq = wal_.RequestSeq();
       wal_.Begin(seq);
@@ -176,6 +173,8 @@ class BlockManager {
       std::string undo_log = "";
       wal_.WriteLog(seq, redo_log, undo_log);
       wal_.End(seq);
+      wal_.Flush();
+      FlushSuperBlockToFile();
       BPTREE_LOG_INFO("create db {} succ", db_name_);
     } else {
       if (option.eflag == ExistFlag::ERROR) {
@@ -373,7 +372,7 @@ class BlockManager {
     return ret.old_v_;
   }
 
-  BPTREE_INTERFACE void PrintOption() {
+  BPTREE_INTERFACE void PrintOption() const {
     BPTREE_LOG_INFO("db name                  : {}", db_name_);
     BPTREE_LOG_INFO("mode                     : {}", ModeStr(mode_));
     BPTREE_LOG_INFO("cache size               : {}", block_cache_.GetCapacity());
@@ -449,9 +448,9 @@ class BlockManager {
     // 在插入之前记录旧的数据快照, 作为undo log
     std::string block_1_undo, block_2_undo;
     if (sequence != no_wal_sequence) {
-      block_1_undo = CreateResetBlockWalLog(new_block_1_index, new_block_1.Get().GetIndex(), super_block_.key_size_,
+      block_1_undo = CreateResetBlockWalLog(new_block_1_index, new_block_1.Get().GetHeight(), super_block_.key_size_,
                                             super_block_.value_size_);
-      block_2_undo = CreateResetBlockWalLog(new_block_2_index, new_block_2.Get().GetIndex(), super_block_.key_size_,
+      block_2_undo = CreateResetBlockWalLog(new_block_2_index, new_block_2.Get().GetHeight(), super_block_.key_size_,
                                             super_block_.value_size_);
     }
     size_t half_count = block->GetKVView().size() / 2;
@@ -459,14 +458,14 @@ class BlockManager {
       bool succ = new_block_1.Get().AppendKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view,
                                              no_wal_sequence);
       if (succ == false) {
-        throw BptreeExecption("block broken, insert {} th kv", i);
+        throw BptreeExecption("block broken (spliting)", i);
       }
     }
     for (int i = half_count; i < block->GetKVView().size(); ++i) {
       bool succ = new_block_2.Get().AppendKv(block->GetViewByIndex(i).key_view, block->GetViewByIndex(i).value_view,
                                              no_wal_sequence);
       if (succ == false) {
-        throw BptreeExecption("block broken, insert {} th kv", i);
+        throw BptreeExecption("block broken (spliting)", i);
       }
     }
     // 插入之后记录新的数据快照，作为redo log
@@ -520,14 +519,14 @@ class BlockManager {
       bool succ =
           new_block.Get().AppendKv(b1->GetViewByIndex(i).key_view, b1->GetViewByIndex(i).value_view, no_wal_sequence);
       if (succ == false) {
-        throw BptreeExecption("block broken");
+        throw BptreeExecption("block broken (merging)");
       }
     }
     for (size_t i = 0; i < b2->GetKVView().size(); ++i) {
       bool succ =
           new_block.Get().AppendKv(b2->GetViewByIndex(i).key_view, b2->GetViewByIndex(i).value_view, no_wal_sequence);
       if (succ == false) {
-        throw BptreeExecption("block broken");
+        throw BptreeExecption("block broken (merging)");
       }
     }
     if (sequence != no_wal_sequence) {
@@ -678,9 +677,9 @@ class BlockManager {
   }
 
   void OnCacheDelete(const uint32_t& index, Block& block) {
-    GetMetricSet().GetAs<Counter>("flush_block_count")->Add();
     bool dirty = block.Flush();
     if (dirty == true) {
+      GetMetricSet().GetAs<Counter>("flush_block_count")->Add();
       BPTREE_LOG_DEBUG("block {} flush to disk, dirty", index);
       // 确保block上所有修改操作对应的日志已经持久化到磁盘
       this->wal_.EnsureLogFlush(block.GetLogNumber());
@@ -777,11 +776,6 @@ class BlockManager {
     if (log.empty() == true) {
       return;
     }
-    // 四种类型的日志：
-    // superblock meta update
-    // block alloc
-    // block meta update
-    // block data update
     size_t offset = 0;
     uint8_t wal_type = util::StringParser<uint8_t>(log, offset);
     switch (wal_type) {
@@ -914,7 +908,7 @@ class BlockManager {
         this->FlushBlockToFile(block);
       }
     });
-    // 所有数据刷盘
+    // 所有block刷盘
     f_.Flush();
     // 重置wal文件
     wal_.ResetLogFile();
